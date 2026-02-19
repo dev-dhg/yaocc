@@ -1,0 +1,103 @@
+{
+  "timezone": "Europe/Berlin",
+  "maxTurns": 5,
+  "cmds": [
+    {
+      "name": "exec",
+      "enabled": true,
+      "options": {
+        "blacklist": ["rm -rf", "sudo", "shutdown"]
+      }
+    }
+  ],
+  "models": {
+    "model": "ollama/llama3.2",
+    "providers": {
+      "ollama": {
+        "baseUrl": "http://localhost:11434/v1",
+        "apiKey": "ollama",
+        "type": "openai",
+        "models": [
+          {
+            "id": "llama3",
+            "model": "llama3.2",
+            "name": "Llama 3.2",
+            "input": ["text"],
+            "contextWindow": 8192,
+            "maxTokens": 4096
+          }
+        ]
+      }
+    }
+  },
+	"session": {
+		"summarize": true,
+		"summaryModel": "ollama/gemma3:4b",
+		"summaryStrategy": "rolling"
+  },
+  "messaging": [
+    {
+      "provider": "telegram",
+      "telegram": {
+        "enabled": true,
+        "botToken": "${TELEGRAM_BOT_TOKEN}",
+        "allowedUsers": ["your_username"]
+      }
+    }
+  ],
+  "cron": [
+    {
+      "name": "daily-greeting",
+      "schedule": "0 9 * * *",
+      "type": "prompt",
+      "prompt": "Say good morning to the user in a friendly way.",
+      "targets": [
+        { "provider": "telegram", "id": "YOUR_CHAT_ID" }
+      ]
+    },
+    {
+      "name": "check-disk",
+      "schedule": "@hourly",
+      "type": "script",
+      "script": "scripts/check_disk.ps1",
+      "targets": [
+        { "provider": "telegram", "id": "YOUR_CHAT_ID" }
+      ]
+    }
+  ],
+  "server": {
+    "port": 8080,
+    "authToken": "${SERVER_TOKEN}"
+  },
+  "websearch": {
+    "provider": "searxng",
+    "providers": {
+      "searxng": {
+        "name": "My SearxNG",
+        "type": "searxng",
+        "endpoint": "https://searxng.url",
+        "maxResults": 5
+      },
+      "brave": {
+        "name": "Brave Search",
+        "type": "brave",
+        "apiKey": "${BRAVE_API_KEY}",
+        "maxResults": 5,
+        "freeTier": {
+          "enabled": true,
+          "fallback": "searxng"
+        }
+      },
+      "perplexity": {
+        "name": "Perplexity",
+        "type": "perplexity",
+        "apiKey": "${PERPLEXITY_API_KEY}",
+        "maxResults": 5,
+        "fallback": "searxng"
+      }
+    }
+  },
+  "storage": {
+    "tempDir": "./temp"
+  }
+}

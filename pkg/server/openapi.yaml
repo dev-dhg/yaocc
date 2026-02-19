@@ -1,0 +1,110 @@
+openapi: 3.0.0
+info:
+  title: YAOCC API
+  description: API for the YAOCC AI Assistant
+  version: 1.0.0
+servers:
+  - url: http://localhost:8080
+    description: Local server
+paths:
+  /chat:
+    post:
+      summary: Send a message to the agent
+      operationId: chat
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Hello, how are you?"
+              required:
+                - message
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  response:
+                    type: string
+                    example: "I am doing well, thank you!"
+                  error:
+                    type: string
+                    example: "Something went wrong"
+        '400':
+          description: Invalid request
+        '500':
+          description: Internal server error
+  /exec:
+    post:
+      summary: Execute shell command (if enabled)
+      operationId: exec
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                command:
+                  type: string
+                  example: "ls -la"
+              required:
+                - command
+      responses:
+        '200':
+          description: Command executed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  output:
+                    type: string
+                  error:
+                    type: string
+        '403':
+          description: Command forbidden (disabled or blocked by security policy)
+        '400':
+          description: Invalid request
+  /cron/run:
+    post:
+      summary: Manually trigger a cron job
+      operationId: cronRun
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                index:
+                  type: integer
+                  description: Zero-based index of the cron job to run
+                  example: 0
+              required:
+                - index
+      responses:
+        '202':
+          description: Job accepted and running asynchronously
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "accepted"
+                  job:
+                    type: string
+                    example: "daily_joke"
+        '400':
+          description: Invalid index or request body
+        '503':
+          description: Scheduler not available

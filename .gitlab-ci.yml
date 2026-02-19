@@ -1,0 +1,68 @@
+image: golang:1.23
+
+stages:
+  - build
+
+variables:
+  GO111MODULE: "on"
+  CGO_ENABLED: "0"
+
+build-linux:
+  stage: build
+  script:
+    - mkdir -p build/linux
+    - GOOS=linux GOARCH=amd64 go build -o build/linux/yaocc ./cmd/yaocc
+    - GOOS=linux GOARCH=amd64 go build -o build/linux/yaocc-server ./cmd/yaocc-server
+  artifacts:
+    name: "yaocc-linux-$CI_COMMIT_SHORT_SHA"
+    paths:
+      - build/linux/
+    expire_in: 1 week
+
+build-linux:arm64:
+  stage: build
+  script:
+    - mkdir -p build/linux
+    - GOOS=linux GOARCH=arm64 go build -o build/linux/yaocc-arm64 ./cmd/yaocc
+    - GOOS=linux GOARCH=arm64 go build -o build/linux/yaocc-server-arm64 ./cmd/yaocc-server
+  artifacts:
+    name: "yaocc-linux-arm64-$CI_COMMIT_SHORT_SHA"
+    paths:
+      - build/linux/
+    expire_in: 1 week
+
+build-linux:armv7:
+  stage: build
+  script:
+    - mkdir -p build/linux
+    - GOOS=linux GOARCH=arm GOARM=7 go build -o build/linux/yaocc-armv7 ./cmd/yaocc
+    - GOOS=linux GOARCH=arm GOARM=7 go build -o build/linux/yaocc-server-armv7 ./cmd/yaocc-server
+  artifacts:
+    name: "yaocc-linux-armv7-$CI_COMMIT_SHORT_SHA"
+    paths:
+      - build/linux/
+    expire_in: 1 week
+
+build-darwin:
+  stage: build
+  script:
+    - mkdir -p build/darwin
+    - GOOS=darwin GOARCH=arm64 go build -o build/darwin/yaocc-darwin ./cmd/yaocc
+    - GOOS=darwin GOARCH=arm64 go build -o build/darwin/yaocc-server-darwin ./cmd/yaocc-server
+  artifacts:
+    name: "yaocc-darwin-$CI_COMMIT_SHORT_SHA"
+    paths:
+      - build/darwin/
+    expire_in: 1 week
+
+build-windows:
+  stage: build
+  script:
+    - mkdir -p build/windows
+    - GOOS=windows GOARCH=amd64 go build -o build/windows/yaocc.exe ./cmd/yaocc
+    - GOOS=windows GOARCH=amd64 go build -o build/windows/yaocc-server.exe ./cmd/yaocc-server
+  artifacts:
+    name: "yaocc-windows-$CI_COMMIT_SHORT_SHA"
+    paths:
+      - build/windows/
+    expire_in: 1 week

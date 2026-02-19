@@ -1,0 +1,22 @@
+# Ignore all .md files in root except README.md
+/*.md
+!/README.md
+!/AGENTS.md
+!/DEV.md
+
+# Ignore all .json files in root
+/*.json
+
+# Ignore all .exe files in root
+/*.exe*
+
+# Ignore all .log files in root
+/*.log*
+
+# Ignore the resources folder in root
+/build/
+/resources/
+/sessions/
+/temp/
+
+.env

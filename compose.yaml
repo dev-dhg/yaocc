@@ -1,0 +1,25 @@
+services:
+  yaocc:
+    build:
+      context: .
+      args:
+        YAOCC_BASE_IMAGE: "node:24-alpine"
+        YAOCC_DOCKER_APK_PACKAGES: "git nano curl unzip python3"
+        YAOCC_DOCKER_RUN_COMMANDS: ""
+        YAOCC_USER: "node"
+    image: ${YAOCC_IMAGE:-yaocc:latest}
+    container_name: yaocc
+    restart: unless-stopped
+    pull_policy: always
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - LOG=true
+      #- LOG_FILE=agent.log
+      #- YAOCC_CONFIG_DIR=/app/data
+      #- SERVER_TOKEN=${SERVER_TOKEN}
+      #- TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+    env_file:
+      - .env

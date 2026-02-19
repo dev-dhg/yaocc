@@ -1,0 +1,98 @@
+name: Build
+
+on:
+  push:
+    branches: [ "main" ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            output_name: yaocc-linux-amd64
+          - os: ubuntu-latest
+            goos: linux
+            goarch: arm64
+            output_name: yaocc-linux-arm64
+          - os: windows-latest
+            goos: windows
+            goarch: amd64
+            output_name: yaocc-windows-amd64.exe
+          - os: macos-latest
+            goos: darwin
+            goarch: arm64
+            output_name: yaocc-darwin-arm64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.23'
+
+    - name: Build CLI
+      run: |
+        go build -v -o build/${{ matrix.output_name }} ./cmd/yaocc
+      env:
+        GOOS: ${{ matrix.goos }}
+        GOARCH: ${{ matrix.goarch }}
+
+    - name: Build Server
+      # Append -server to output name before extension
+      run: |
+        if [ "${{ matrix.goos }}" == "windows" ]; then
+           SERVER_OUTPUT="build/${{ matrix.output_name }}"
+           SERVER_OUTPUT="${SERVER_OUTPUT/.exe/-server.exe}"
+        else
+           SERVER_OUTPUT="build/${{ matrix.output_name }}-server"
+        fi
+        echo "Building server to $SERVER_OUTPUT"
+        go build -v -o $SERVER_OUTPUT ./cmd/yaocc-server
+      env:
+        GOOS: ${{ matrix.goos }}
+        GOARCH: ${{ matrix.goarch }}
+      shell: bash
+
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.output_name }}
+        path: build/
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Package archives
+        run: |
+          cd artifacts
+          for dir in */; do
+            name="${dir%/}"
+            zip -r "../${name}.zip" "$dir"
+          done
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: '*.zip'
+          generate_release_notes: true
+          draft: false
+          prerelease: false

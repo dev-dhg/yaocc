@@ -1,0 +1,84 @@
+{
+    "timezone": "Europe/Berlin",
+    "maxTurns": 5,
+    "models": {
+        "model": "ollama/llama3.2",
+        "providers": {
+            "ollama": {
+                "baseUrl": "http://localhost:11434/v1",
+                "apiKey": "ollama",
+                "type": "openai",
+                "models": [
+                    {
+                        "id": "llama3",
+                        "model": "llama3.2",
+                        "name": "Llama 3.2",
+                        "input": [
+                            "text"
+                        ],
+                        "contextWindow": 8192,
+                        "maxTokens": 4096
+                    }
+                ]
+            }
+        }
+    },
+    "session": {
+        "summarize": true,
+        "summaryModel": "ollama/llama3.2",
+        "summaryStrategy": "rolling"
+    },
+    "messaging": [
+        {
+            "provider": "telegram",
+            "telegram": {
+                "enabled": true,
+                "botToken": "${TELEGRAM_BOT_TOKEN}",
+                "allowedUsers": [
+                    "your_username"
+                ]
+            }
+        }
+    ],
+    "cron": [],
+    "websearch": {
+        "provider": "searxng",
+        "providers": {
+            "searxng": {
+                "name": "My SearxNG",
+                "type": "searxng",
+                "endpoint": "https://searxng.url",
+                "maxResults": 5
+            },
+            "brave": {
+                "name": "Brave Search",
+                "type": "brave",
+                "apiKey": "${BRAVE_API_KEY}",
+                "maxResults": 5,
+                "freeTier": {
+                    "enabled": true,
+                    "fallback": "searxng"
+                }
+            },
+            "perplexity": {
+                "name": "Perplexity",
+                "type": "perplexity",
+                "apiKey": "${PERPLEXITY_API_KEY}",
+                "maxResults": 5,
+                "fallback": "searxng"
+            }
+        }
+    },
+    "storage": {
+        "tempDir": "./temp"
+    },
+    "server": {
+        "port": 8080,
+        "authToken": "${SERVER_AUTH_TOKEN}"
+    },
+    "skills": {
+        "paths": [
+            "./skills"
+        ]
+    }
+}
