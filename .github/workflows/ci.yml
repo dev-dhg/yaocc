@@ -21,6 +21,11 @@ jobs:
             goos: linux
             goarch: arm64
             output_name: yaocc-linux-arm64
+          - os: ubuntu-latest
+            goos: linux
+            goarch: arm
+            goarm: '7'
+            output_name: yaocc-linux-armv7
           - os: windows-latest
             goos: windows
             goarch: amd64
@@ -46,6 +51,7 @@ jobs:
       env:
         GOOS: ${{ matrix.goos }}
         GOARCH: ${{ matrix.goarch }}
+        GOARM: ${{ matrix.goarm }}
 
     - name: Build Server
       # Append -server to output name before extension
@@ -61,6 +67,7 @@ jobs:
       env:
         GOOS: ${{ matrix.goos }}
         GOARCH: ${{ matrix.goarch }}
+        GOARM: ${{ matrix.goarm }}
       shell: bash
 
     - name: Upload Artifacts
