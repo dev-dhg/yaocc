@@ -79,6 +79,7 @@
     "skills": {
         "paths": [
             "./skills"
-        ]
+        ],
+        "useSkillsBody": false
     }
 }

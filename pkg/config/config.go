@@ -123,7 +123,43 @@ type ServerConfig struct {
 }
 
 type SkillsConfig struct {
-	Registered map[string]string `json:"registered,omitempty"` // map[name]path
+	Registered    map[string]string `json:"registered,omitempty"`    // map[name]path
+	UseSkillsBody SkillsBodyConfig  `json:"useSkillsBody,omitempty"` // bool or []string
+}
+
+// SkillsBodyConfig allows useSkillsBody to be either a boolean or an array of strings
+type SkillsBodyConfig struct {
+	UseAll      bool
+	UseSpecific []string
+}
+
+// UnmarshalJSON implements custom JSON unmarshaling for SkillsBodyConfig.
+func (s *SkillsBodyConfig) UnmarshalJSON(data []byte) error {
+	// Try unmarshaling as a boolean first
+	var b bool
+	if err := json.Unmarshal(data, &b); err == nil {
+		s.UseAll = b
+		s.UseSpecific = nil
+		return nil
+	}
+
+	// Try unmarshaling as an array of strings
+	var arr []string
+	if err := json.Unmarshal(data, &arr); err == nil {
+		s.UseAll = false
+		s.UseSpecific = arr
+		return nil
+	}
+
+	return fmt.Errorf("useSkillsBody must be either a boolean or an array of strings")
+}
+
+// MarshalJSON implements custom JSON marshaling for SkillsBodyConfig.
+func (s SkillsBodyConfig) MarshalJSON() ([]byte, error) {
+	if s.UseSpecific != nil {
+		return json.Marshal(s.UseSpecific)
+	}
+	return json.Marshal(s.UseAll)
 }
 
 type CmdConfig struct {

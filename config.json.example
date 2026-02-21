@@ -99,5 +99,8 @@
   },
   "storage": {
     "tempDir": "./temp"
+  },
+  "skills": {
+    "useSkillsBody": false
   }
 }

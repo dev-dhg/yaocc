@@ -426,10 +426,27 @@ func (a *Agent) GetSystemPrompt(provider messaging.Provider) string {
 	}
 
 	// Dynamic Skills List
-	sb.WriteString("Available Skills:\n")
+	sb.WriteString("Available Skills:\n<available_skills>\n")
 	for _, skill := range a.Skills {
-		sb.WriteString(fmt.Sprintf("\n### %s\n%s\n%s\n", skill.Name, skill.Description, skill.Content))
+		useBody := a.Config.Skills.UseSkillsBody.UseAll
+		if !useBody && a.Config.Skills.UseSkillsBody.UseSpecific != nil {
+			for _, s := range a.Config.Skills.UseSkillsBody.UseSpecific {
+				if s == skill.Name {
+					useBody = true
+					break
+				}
+			}
+		}
+
+		if useBody {
+			// Old behavior: inject the full body
+			sb.WriteString(fmt.Sprintf("\n### %s\n%s\n%s\n", skill.Name, skill.Description, skill.Content))
+		} else {
+			// New behavior: XML manifest
+			sb.WriteString(fmt.Sprintf("  <skill>\n    <name>%s</name>\n    <description>%s</description>\n  </skill>\n", skill.Name, skill.Description))
+		}
 	}
+	sb.WriteString("</available_skills>\n")
 
 	// Tool Usage Instructions (from TOOLS.md)
 	toolsInstruction := readFileOrDefault(filepath.Join(a.ConfigDir(), "TOOLS.md"), "Usage instructions not found.")
