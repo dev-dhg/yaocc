@@ -18,75 +18,21 @@ yaocc skills list
 ## Creating and Using Skills
 You can extend your capabilities by creating new "Skills". A skill is simply a set of instructions and examples stored in a markdown file. and sometimes is accompanied by a script (Python, Bash, JS, etc.)(js preferred) that you register as a new command. Before creating a skill verify it doest exist yet using `yaocc skills list`.
 
-### 1. Create the Script and Skill Definition
-First, create the script and the `SKILL.md` file as usual.
-
- To add a new skill:
-1.  Create a directory: `skills/<skill_name>/`
-2.  Create a file: `skills/<skill_name>/SKILL.md`
-3.  Write the skill definition in frontmatter and instructions in the body.
-
-#### Example: Creating a "Weather" Skill using `file write`
-
+**CRITICAL RULE FOR UNFAMILIAR SKILLS:** If you see a skill in your `<available_skills>` manifest but do not know its precise arguments, you MUST read its documentation first using:
 ```bash
-yaocc file write skills/weather/SKILL.md "---
-name: weather
-description: Checks the weather of a city.
----
-# Weather api
-
-To check the weather of a city run
-\`\`\`bash
-yaocc skills weather <city>
-\`\`\`
+yaocc skills get <skill_name>
 ```
-### 2. Create script and verify it runs 
-sometimes you can get away only with SKILL.md
-but sometimes you'll need to create the script, in this case
+Do not attempt to guess the arguments of a custom skill before reading its `SKILL.md` body.
 
-**Note:** You cannot use reserved names like `list`, `register`, `file`, `cron`, etc.
-
-#### Example: Creating a "Weather" Skill script
-1. **Create the script:**
+### Creating a Custom Skill from Scratch
+If the user asks you to create a brand new custom skill, you MUST first read the tutorial to learn the framework mechanics by running:
 ```bash
-yaocc file write skills/weather/weather.js "console.log(`Weather in ${process.argv[2]}: Sunny`);"
+yaocc skills tutorial
 ```
+DO NOT attempt to create a custom skill without reading the tutorial first.
 
-2. **Verify it runs:**
-verify it runs correctly before you register!
-```bash
-yaocc file run skills/weather/weather.js Paris
-```
 
-3. **Register it:**
-Use the `yaocc skills register` command to link a command name to your script.
-very important you can register the skill only after it runs correctly in the previous step
-
-```bash
-yaocc skills register <command_name> <path_to_script>
-```
-example:
-```bash
-yaocc skills register weather skills/weather/weather.js
-```
-
-4. **Use it:**
-You can now use `yaocc skills weather <city>` directly!
-```bash
-yaocc skills weather Paris
-```
-
-5. **List Skills:**
-```bash
-yaocc skills list
-```
-
-6. **Unregister:**
-```bash
-yaocc skills unregister weather
-```
-
-### 7. Execute Shell Commands
+### Execute Shell Commands
 ```bash
 yaocc exec <command>
 ```

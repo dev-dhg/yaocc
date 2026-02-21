@@ -443,7 +443,7 @@ func (a *Agent) GetSystemPrompt(provider messaging.Provider) string {
 			sb.WriteString(fmt.Sprintf("\n### %s\n%s\n%s\n", skill.Name, skill.Description, skill.Content))
 		} else {
 			// New behavior: XML manifest
-			sb.WriteString(fmt.Sprintf("  <skill>\n    <name>%s</name>\n    <description>%s</description>\n  </skill>\n", skill.Name, skill.Description))
+			sb.WriteString(fmt.Sprintf("  <skill>\n    <name>%s</name>\n    <description>%s</description>\n    <location>%s</location>\n  </skill>\n", skill.Name, skill.Description, skill.Path))
 		}
 	}
 	sb.WriteString("</available_skills>\n")

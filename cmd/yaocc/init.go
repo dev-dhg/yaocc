@@ -41,6 +41,7 @@ func runInit() {
 	createFileFromTemplate(p("USER.md"), "USER.md")
 	createFileFromTemplate(p("BOOTSTRAP.md"), "BOOTSTRAP.md")
 	createFileFromTemplate(p("MEMORY.md"), "MEMORY.md")
+	createFileFromTemplate(p("SKILLS_TUTORIAL.md"), "SKILLS_TUTORIAL.md")
 
 	// 3. Create sample cron skill
 	if err := os.MkdirAll(p("skills/cron"), 0755); err != nil {

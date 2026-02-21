@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -146,6 +147,44 @@ func runSkills(args []string) {
 			fmt.Printf("  - %s -> %s\n", name, path)
 		}
 
+	case "get":
+		// Usage: yaocc skills get <name>
+		if len(args) < 2 {
+			fmt.Println("Usage: yaocc skills get <name>")
+			return
+		}
+		name := args[1]
+
+		// Check if it's a registered skill
+		if scriptPath, ok := cfg.Skills.Registered[name]; ok {
+			fmt.Printf("Skill '%s' points to script '%s'.\n", name, scriptPath)
+			// Generally, skills documentation will be under the same folder named SKILL.md
+			// Try to automatically read it
+			dir := config.ResolveConfigDir()
+			resolvedScript, _ := resolveSafePath(dir, scriptPath)
+			skillDir := filepath.Dir(resolvedScript)
+			readmePath := filepath.Join(skillDir, "SKILL.md")
+			if content, err := os.ReadFile(readmePath); err == nil {
+				fmt.Printf("\n--- SKILL.md ---\n%s\n", string(content))
+			} else {
+				fmt.Printf("Warning: Could not automatically find SKILL.md near the script at %s\n", readmePath)
+			}
+			return
+		}
+
+		// Otherwise, it might be a built-in skill, or we should look through actual paths.
+		// For built-ins, we can point them to the docs.
+		fmt.Printf("Skill '%s' is not registered as a custom script skill. If it's built-in (e.g. cron, file_manager, websearch), refer to the core documentation or verify the name.\n", name)
+
+	case "tutorial":
+		dir := config.ResolveConfigDir()
+		tutorialPath := filepath.Join(dir, "SKILLS_TUTORIAL.md")
+		if content, err := os.ReadFile(tutorialPath); err == nil {
+			fmt.Printf("\n--- SKILLS_TUTORIAL.md ---\n%s\n", string(content))
+		} else {
+			fmt.Printf("Warning: Could not find SKILLS_TUTORIAL.md at %s. Try running 'yaocc init' to generate it.\n", tutorialPath)
+		}
+
 	case "help":
 		printSkillsHelp()
 
@@ -182,5 +221,7 @@ func printSkillsHelp() {
 	fmt.Println("  register <name> <path>   Register a new skill")
 	fmt.Println("  unregister <name>        Unregister an existing skill")
 	fmt.Println("  list                     List all skills (built-in and registered)")
+	fmt.Println("  get <name>               Read the instructions (SKILL.md) for a skill")
+	fmt.Println("  tutorial                 Read the comprehensive skill creation tutorial")
 	fmt.Println("  <name> [args]            Execute a registered skill")
 }
