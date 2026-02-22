@@ -43,3 +43,6 @@ Example:
 ```bash
 yaocc exec ls -la
 ```
+
+### General
+**CRITICAL RULE FOR UNFAMILIAR SKILLS:** If the user asks you to do something always check the available skills and use them first if they already provide the functionality you are looking for, if not use websearch first, before you attempt to create a new skill
