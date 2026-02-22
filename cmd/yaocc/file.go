@@ -11,7 +11,7 @@ import (
 
 func runFile(args []string) {
 	if len(args) < 1 {
-		fmt.Println("Usage: yaocc file <read|write|list|delete|mkdir|run> [args]")
+		fmt.Println("Usage: yaocc file <read|write|append|list|delete|mkdir|run> [args]")
 		return
 	}
 
@@ -101,6 +101,39 @@ func runFile(args []string) {
 			return
 		}
 		fmt.Printf("Successfully wrote to %s\n", args[1]) // Don't leak full absolute path if possible, or maybe it's fine.
+	case "append":
+		// Usage: yaocc file append <path> <content>
+		if len(args) < 3 {
+			fmt.Println("Usage: yaocc file append <path> <content>")
+			return
+		}
+		targetPath, err := resolvePath(args[1])
+		if err != nil {
+			fmt.Printf("Error: %v\n", err)
+			return
+		}
+
+		content := args[2]
+		content = strings.ReplaceAll(content, "\\n", "\n")
+
+		if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+			fmt.Printf("Error creating directories: %v\n", err)
+			return
+		}
+
+		// Open file in append mode, create if it doesn't exist
+		f, err := os.OpenFile(targetPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			fmt.Printf("Error opening file for append: %v\n", err)
+			return
+		}
+		defer f.Close()
+
+		if _, err := f.WriteString(content + "\n"); err != nil {
+			fmt.Printf("Error appending to file: %v\n", err)
+			return
+		}
+		fmt.Printf("Successfully appended to %s\n", args[1])
 	case "delete":
 		// Usage: yaocc file delete <path>
 		if len(args) < 2 {

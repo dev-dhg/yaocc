@@ -24,6 +24,7 @@ type Agent struct {
 	Soul       string
 	Identity   string
 	User       string
+	Rules      string
 	Memory     string
 	Sessions   *SessionManager
 	Verbose    bool
@@ -51,7 +52,41 @@ func NewAgent(cfg *config.Config, configDir string, verbose bool, logFile string
 	soul := readFileOrDefault(filepath.Join(configDir, "SOUL.md"), "You are a helpful assistant.")
 	identity := readFileOrDefault(filepath.Join(configDir, "IDENTITY.md"), "")
 	user := readFileOrDefault(filepath.Join(configDir, "USER.md"), "")
+
+	// Load memories: long-term, today, yesterday
 	memory := readFileOrDefault(filepath.Join(configDir, "MEMORY.md"), "")
+
+	agentsRules := readFileOrDefault(filepath.Join(configDir, "AGENTS.md"), "")
+
+	now := time.Now()
+	today := now.Format("2006-01-02")
+	yesterday := now.AddDate(0, 0, -1).Format("2006-01-02")
+
+	todayMem := readFileOrDefault(filepath.Join(configDir, "memory", today+".md"), "")
+	yesterdayMem := readFileOrDefault(filepath.Join(configDir, "memory", yesterday+".md"), "")
+
+	var memBuilder strings.Builder
+	memBuilder.WriteString("# Current Memory Context\n\n")
+
+	if memory != "" {
+		memBuilder.WriteString(fmt.Sprintf("## Long-Term Memory (MEMORY.md)\n%s\n\n", memory))
+	} else {
+		memBuilder.WriteString("## Long-Term Memory (MEMORY.md)\n[Empty]\n\n")
+	}
+
+	if yesterdayMem != "" {
+		memBuilder.WriteString(fmt.Sprintf("## Yesterday's Context (memory/%s.md)\n%s\n\n", yesterday, yesterdayMem))
+	} else {
+		memBuilder.WriteString(fmt.Sprintf("## Yesterday's Context (memory/%s.md)\n[Empty]\n\n", yesterday))
+	}
+
+	if todayMem != "" {
+		memBuilder.WriteString(fmt.Sprintf("## Today's Context (memory/%s.md)\n%s\n\n", today, todayMem))
+	} else {
+		memBuilder.WriteString(fmt.Sprintf("## Today's Context (memory/%s.md)\n[Empty]\n\n", today))
+	}
+
+	finalMemory := strings.TrimSpace(memBuilder.String())
 
 	// Initialize Agent
 	// Use configDir for sessions
@@ -64,7 +99,8 @@ func NewAgent(cfg *config.Config, configDir string, verbose bool, logFile string
 		Soul:      soul,
 		Identity:  identity,
 		User:      user,
-		Memory:    memory,
+		Rules:     agentsRules,
+		Memory:    finalMemory,
 		Sessions:  sessions,
 		Verbose:   verbose,
 		LogFile:   logFile,
@@ -340,6 +376,13 @@ func (a *Agent) RunTask(sessionID, prompt, contextMsg string) (string, error) {
 	// But we do include the Agent's identity/soul/skills.
 
 	var sb strings.Builder
+
+	// Inject current date/time to ground the agent
+	sb.WriteString(fmt.Sprintf("Current Date & Time: %s\n\n", time.Now().Format("2006-01-02 15:04:05 MST")))
+
+	if a.Rules != "" {
+		sb.WriteString(a.Rules + "\n\n")
+	}
 	if a.Identity != "" {
 		sb.WriteString(a.Identity + "\n\n")
 	}
@@ -398,6 +441,13 @@ func (a *Agent) RunTask(sessionID, prompt, contextMsg string) (string, error) {
 // Use this for stateless contexts (e.g., cron jobs) where tool execution is not possible.
 func (a *Agent) GetBaseSystemPrompt() string {
 	var sb strings.Builder
+
+	// Inject current date/time
+	sb.WriteString(fmt.Sprintf("Current Date & Time: %s\n\n", time.Now().Format("2006-01-02 15:04:05 MST")))
+
+	if a.Rules != "" {
+		sb.WriteString(a.Rules + "\n\n")
+	}
 	if a.Identity != "" {
 		sb.WriteString(a.Identity + "\n\n")
 	}
@@ -414,6 +464,12 @@ func (a *Agent) GetBaseSystemPrompt() string {
 func (a *Agent) GetSystemPrompt(provider messaging.Provider) string {
 	var sb strings.Builder
 
+	// Inject current date/time
+	sb.WriteString(fmt.Sprintf("Current Date & Time: %s\n\n", time.Now().Format("2006-01-02 15:04:05 MST")))
+
+	if a.Rules != "" {
+		sb.WriteString(a.Rules + "\n\n")
+	}
 	if a.Identity != "" {
 		sb.WriteString(a.Identity + "\n\n")
 	}

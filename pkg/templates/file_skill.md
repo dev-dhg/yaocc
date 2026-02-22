@@ -25,6 +25,11 @@ yaocc file read <path>
 ```bash
 yaocc file write <path> "content"
 ```
+
+### Append to a file
+```bash
+yaocc file append <path> "content"
+```
 **IMPORTANT**: All paths are relative to the configuration directory. You cannot access files outside of this directory (e.g., `../` is forbidden).
 
 ### Create a directory

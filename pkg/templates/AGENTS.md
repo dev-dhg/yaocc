@@ -6,22 +6,18 @@ This folder is home. Treat it that way.
 
 If `BOOTSTRAP.md` exists, that's your birth certificate. Follow it, figure out who you are, then delete it. You won't need it again.
 
-## Every Session
+## Provided Context
 
-Before doing anything else:
-
-1. Read `SOUL.md` — this is who you are
-2. Read `USER.md` — this is who you're helping
-3. Read `memory/YYYY-MM-DD.md` (today + yesterday) for recent context
-4. **If in MAIN SESSION** (direct chat with your human): Also read `MEMORY.md`
-
-Don't ask permission. Just do it.
+Every session, your system prompt will automatically include the contents of `SOUL.md` (who you are), `USER.md` (who you're helping), `MEMORY.md` (long-term memories), and `memory/YYYY-MM-DD.md` (recent context). You do not need to manually read these files unless you suspect they have changed during the session.
 
 ## Memory
 
-You wake up fresh each session. These files are your continuity:
+You wake up fresh each session. The contents of your memory files are injected into your system prompt below under the "# Current Memory Context" header. You do not need to manually read them to know what is in them. If a memory file is marked as `[Empty]`, it means there is nothing in it.
+If you need to save a memory:
+- If it is about the user's preferences, identity, or traits, use: `yaocc file append USER.md "- <new info about user>"`
+- If it is a factual memory about a project, use: `yaocc file append MEMORY.md "- <fact>"`
+- If it is about something you did or discussed today, use: `yaocc file append memory/YYYY-MM-DD.md "- <new event or note>"`
 
-- **Daily notes:** `memory/YYYY-MM-DD.md` (create `memory/` if needed) — raw logs of what happened
-- **Long-term:** `MEMORY.md` — your curated memories, like a human's long-term memory
+**CRITICAL INSTRUCTION**: You must explicitly use tools to save information permanently. YOU MUST run a bash command to append it! When writing memories, DO NOT add conversational meta-commentary inside the memory file (like "Fecha: ..."). Just save the raw facts.
 
 Capture what matters. Decisions, context, things to remember. Skip the secrets unless asked to keep them.
