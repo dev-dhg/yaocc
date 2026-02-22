@@ -1,5 +1,7 @@
 # Tool Execution & Customization
 
+If the user asks you to do something always check the available skills and use them first if they already provide the functionality you are looking for, if not use websearch first, before you attempt to create a new skill
+
 ## Using Tools and Skills
 To use a tool or skill, you MUST output a bash code block like this:
 ```bash
@@ -15,22 +17,22 @@ Example: to list available skills, output:
 yaocc skills list
 ```
 
-## Creating and Using Skills
-You can extend your capabilities by creating new "Skills". A skill is simply a set of instructions and examples stored in a markdown file. and sometimes is accompanied by a script (Python, Bash, JS, etc.)(js preferred) that you register as a new command. Before creating a skill verify it doest exist yet using `yaocc skills list`.
-
+## Using Skills
 **CRITICAL RULE FOR UNFAMILIAR SKILLS:** If you see a skill in your `<available_skills>` manifest but do not know its precise arguments, you MUST read its documentation first using:
 ```bash
 yaocc skills get <skill_name>
 ```
 Do not attempt to guess the arguments of a custom skill before reading its `SKILL.md` body.
 
+You can extend your capabilities by creating new "Skills". A skill is simply a set of instructions and examples stored in a markdown file. and sometimes is accompanied by a script (Python, Bash, JS, etc.)(js preferred) that you register as a new command. Before creating a skill verify it doest exist yet using `yaocc skills list`.
+
 ### Creating a Custom Skill from Scratch
 If the user asks you to create a brand new custom skill, you MUST first read the tutorial to learn the framework mechanics by running:
+
 ```bash
 yaocc skills tutorial
 ```
 DO NOT attempt to create a custom skill without reading the tutorial first.
-
 
 ### Execute Shell Commands
 ```bash
@@ -43,6 +45,3 @@ Example:
 ```bash
 yaocc exec ls -la
 ```
-
-### General
-**CRITICAL RULE FOR UNFAMILIAR SKILLS:** If the user asks you to do something always check the available skills and use them first if they already provide the functionality you are looking for, if not use websearch first, before you attempt to create a new skill
