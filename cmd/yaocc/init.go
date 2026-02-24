@@ -80,6 +80,12 @@ func runInit() {
 	}
 	createFileFromTemplate(p("skills/exec/SKILL.md"), "exec_skill.md")
 
+	// 9. Create skills management skill
+	if err := os.MkdirAll(p("skills/skills"), 0755); err != nil {
+		fmt.Printf("Error creating skills/skills directory: %v\n", err)
+	}
+	createFileFromTemplate(p("skills/skills/SKILL.md"), "skills_skill.md")
+
 	fmt.Println("Project initialized successfully!")
 	fmt.Println("Run 'yaocc-server' to start the server.")
 }

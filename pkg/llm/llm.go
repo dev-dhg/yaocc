@@ -22,13 +22,39 @@ type Client struct {
 }
 
 type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string     `json:"role"`
+	Content    string     `json:"content"`
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
+	Name       string     `json:"name,omitempty"` // Used sometimes for tool responses
+}
+
+type Tool struct {
+	Type     string       `json:"type"` // "function"
+	Function ToolFunction `json:"function"`
+}
+
+type ToolFunction struct {
+	Name        string      `json:"name"`
+	Description string      `json:"description,omitempty"`
+	Parameters  interface{} `json:"parameters,omitempty"` // JSON Schema object
+}
+
+type ToolCall struct {
+	ID       string       `json:"id"`
+	Type     string       `json:"type"` // "function"
+	Function FunctionCall `json:"function"`
+}
+
+type FunctionCall struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"` // JSON string
 }
 
 type ChatRequest struct {
 	Model     string      `json:"model"`
 	Messages  []Message   `json:"messages"`
+	Tools     []Tool      `json:"tools,omitempty"`
 	MaxTokens int         `json:"max_tokens,omitempty"`
 	Stream    bool        `json:"stream"`
 	Reasoning interface{} `json:"reasoning,omitempty"`
@@ -84,10 +110,12 @@ func NewClient(cfg config.ProviderConfig, selectedModel string) *Client {
 	}
 }
 
-func (c *Client) Chat(messages []Message) (string, error) {
+// Chat sends messages and optional tools. Returns the text response, any tool calls, and error.
+func (c *Client) Chat(messages []Message, tools []Tool) (string, []ToolCall, error) {
 	reqBody := ChatRequest{
 		Model:     c.Model,
 		Messages:  messages,
+		Tools:     tools,
 		MaxTokens: c.MaxTokens,
 		Stream:    false,
 	}
@@ -115,12 +143,12 @@ func (c *Client) Chat(messages []Message) (string, error) {
 
 	jsonData, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal request: %w", err)
+		return "", nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
 	req, err := http.NewRequest("POST", c.BaseURL+"/chat/completions", bytes.NewBuffer(jsonData))
 	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
+		return "", nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -130,13 +158,13 @@ func (c *Client) Chat(messages []Message) (string, error) {
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("failed to send request to %s (Model: %s): %w", c.BaseURL, c.Model, err)
+		return "", nil, fmt.Errorf("failed to send request to %s (Model: %s): %w", c.BaseURL, c.Model, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("API request to %s failed with status %d (Model: %s): %s", c.BaseURL, resp.StatusCode, c.Model, string(body))
+		return "", nil, fmt.Errorf("API request to %s failed with status %d (Model: %s): %s", c.BaseURL, resp.StatusCode, c.Model, string(body))
 	}
 
 	type ErrorResponse struct {
@@ -154,17 +182,17 @@ func (c *Client) Chat(messages []Message) (string, error) {
 	// Check for API Error
 	var errResp ErrorResponse
 	if err := json.Unmarshal(bodyBytes, &errResp); err == nil && errResp.Error.Message != "" {
-		return "", fmt.Errorf("API Error from %s (Model: %s): %s (Code: %d)", c.BaseURL, c.Model, errResp.Error.Message, errResp.Error.Code)
+		return "", nil, fmt.Errorf("API Error from %s (Model: %s): %s (Code: %d)", c.BaseURL, c.Model, errResp.Error.Message, errResp.Error.Code)
 	}
 
 	var chatResp ChatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
-		return "", fmt.Errorf("failed to decode response: %w", err)
+		return "", nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
 	if len(chatResp.Choices) == 0 {
-		return "", fmt.Errorf("no choices returned from %s (Model: %s). Raw response: %s", c.BaseURL, c.Model, string(bodyBytes))
+		return "", nil, fmt.Errorf("no choices returned from %s (Model: %s). Raw response: %s", c.BaseURL, c.Model, string(bodyBytes))
 	}
 
-	return chatResp.Choices[0].Message.Content, nil
+	return chatResp.Choices[0].Message.Content, chatResp.Choices[0].Message.ToolCalls, nil
 }

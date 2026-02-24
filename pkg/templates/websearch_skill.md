@@ -1,6 +1,8 @@
 ---
 name: websearch
 description: Search the web for information using a configured provider (e.g., SearxNG).
+tags:
+  - built-in
 ---
 
 To search the web, use the `websearch` command.

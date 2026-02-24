@@ -18,13 +18,13 @@ The agentic capabilities of YAOCC are defined in the `skills` section:
   "registered": {
     "crypto": "skills/crypto/crypto.js"
   },
-  "useSkillsBody": false
+  "injectFullSkillText": false
 }
 ```
 
 *   **`paths`**: An array of directories where the agent will search for `SKILL.md` files.
 *   **`registered`**: An optional key-value map linking a custom skill name to its precise execution path.
-*   **`useSkillsBody`**: To optimize LLM context window limits and save tokens, YAOCC injects an XML "manifest" of available skills (just the name and description) into the system prompt by default (`false`).
+*   **`injectFullSkillText`**: To optimize LLM context window limits and save tokens, YAOCC injects an XML "manifest" of available skills (just the name and description) into the system prompt by default (`false`).
     *   Set to `true` to inject the entire `SKILL.md` instructions for *all* loaded skills.
     *   Set to an array of specific skill names (e.g., `["crypto", "websearch"]`) to inject the full body for those specific skills while using the XML manifest for all others.
 

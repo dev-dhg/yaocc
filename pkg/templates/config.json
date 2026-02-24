@@ -10,6 +10,17 @@
                 "type": "openai",
                 "models": [
                     {
+                        "id": "gemma3:4b",
+                        "model": "gemma3:4b",
+                        "name": "Gemma 3 4B",
+                        "tool": false,
+                        "input": [
+                            "text"
+                        ],
+                        "contextWindow": 8192,
+                        "maxTokens": 4096
+                    },
+                    {
                         "id": "llama3",
                         "model": "llama3.2",
                         "name": "Llama 3.2",
@@ -80,6 +91,7 @@
         "paths": [
             "./skills"
         ],
-        "useSkillsBody": false
-    }
+        "injectFullSkillText": false
+    },
+    "useNativeToolCalling": true
 }

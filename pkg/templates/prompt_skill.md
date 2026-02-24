@@ -1,6 +1,8 @@
 ---
 name: prompt
 description: Ask a quick question to the LLM
+tags:
+  - built-in
 ---
 
 # Prompt Skill

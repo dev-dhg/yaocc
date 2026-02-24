@@ -1,6 +1,8 @@
 ---
 name: file_manager
 description: Read, write, run, delete and list files in the workspace.
+tags:
+  - built-in
 ---
 
 # File System

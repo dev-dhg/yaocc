@@ -1,6 +1,8 @@
 ---
 name: exec
 description: Execute shell commands on the host machine.
+tags:
+  - built-in
 ---
 
 # Command Execution

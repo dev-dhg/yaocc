@@ -107,7 +107,7 @@ func runPrompt(args []string) {
 	}
 
 	fmt.Printf("Sending prompt to %s...\n", modelID)
-	response, err := client.Chat(messages)
+	response, _, err := client.Chat(messages, nil)
 	if err != nil {
 		fmt.Printf("Error during chat: %v\n", err)
 		return

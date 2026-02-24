@@ -1,67 +1,79 @@
 ---
 name: cron_manager
-description: Manage cron jobs and scheduled tasks.
+description: Manage cron jobs and scheduled tasks. You MUST always use this tool to schedule events, recurring tasks, or delayed actions.
 metadata: { "type": "remote" }
+tags:
+  - built-in
 ---
 
 # Cron Manager
 
-Use this skill to list or manage cron jobs.
+Use this skill to list or manage cron jobs. **You MUST always use this tool when the user asks to schedule an event, set a reminder, or run a task at a specific time.**
 
 ## Usage
 
+```bash
+# List all configured cron jobs
 yaocc cron list
 ```
 
-Add a new cron job:
+### Adding Cron Jobs
+
+**1. Prompt-Based Jobs**
+The agent will execute this instruction directly on schedule.
 ```bash
-# Type: prompt (default)
-# The agent will execute this instruction directly.
 yaocc cron add --name "morning_greet" --schedule "0 9 * * *" --prompt "Tell me a joke about programming."
-
-# Type: script (NO PROMPT)
-# The agent will run the script and send the RAW output to the target.
-# No AI processing will occur. Useful for simple logs/alerts.
-yaocc cron add --name "disk_check" --schedule "@hourly" --script "scripts/check_disk.ps1"
-
-# Type: script + prompt
-# The agent will run the script, and then use the output as context to answer the prompt.
-# Useful for analyzing logs or making decisions based on script output.
-yaocc cron add --name "smart_disk_check" --schedule "@hourly" --script "scripts/check_disk.ps1" --prompt "Analyze this disk report. If usage is > 90%, alert me with a scary message."
-
-# With Targets (e.g. Telegram)
-# IMPORTANT: Use "YOUR_PROVIDER" and "YOUR_CHAT_ID" as placeholders. 
-# The system will automatically replace them with the current user's details.
-yaocc cron add --name "morning_quote" --schedule "0 8 * * *" --prompt "Send me a quote" --target-provider "YOUR_PROVIDER" --target-id "YOUR_CHAT_ID"
-
-# Context Aware (Use History)
-# By default, cron jobs are stateless (no memory of past conversations).
-# Add --use-history to execute the prompt within the context of the target's session.
-# This allows the agent to reference previous messages.
-yaocc cron add --name "follow_up" --schedule "0 10 * * *" --prompt "Do you have any updates on the last topic we discussed?" --use-history --target-provider "YOUR_PROVIDER" --target-id "YOUR_CHAT_ID"
 ```
 
-Remove a cron job:
+**2. Script-Based Jobs (NO PROMPT)**
+The agent will run the script and send the RAW output to the target. No AI processing occurs. Useful for simple logs/alerts.
+```bash
+yaocc cron add --name "server_ping" --schedule "@hourly" --script "scripts/ping_server.js"
+```
+
+**3. Script + Prompt Jobs**
+The agent will run the script, and then use the output as context to answer the prompt. Useful for analyzing logs or making decisions based on script output.
+```bash
+yaocc cron add --name "smart_ping" --schedule "@hourly" --script "scripts/ping_server.js 192.168.1.1" --prompt "Analyze this ping result. If the server is down or latency is > 500ms, alert me with a scary message."
+```
+
+### Dynamic Targets and Context
+
+**With Targets (e.g. Telegram)**
+> [!IMPORTANT]
+> Use `CURRENT_PROVIDER` and `CURRENT_SESSION_ID` as placeholders when creating a job for the current user. The system will automatically replace them with the current user's session details!
+
+```bash
+yaocc cron add --name "morning_quote" --schedule "0 8 * * *" --prompt "Send me a quote" --target-provider "CURRENT_PROVIDER" --target-id "CURRENT_SESSION_ID"
+```
+
+**Context Aware (Use History)**
+By default, cron jobs are stateless (no memory of past conversations). Add `--use-history` to execute the prompt within the context of the target's session, allowing the agent to reference previous messages.
+```bash
+yaocc cron add --name "follow_up" --schedule "0 10 * * *" --prompt "Do you have any updates on the last topic we discussed?" --use-history --target-provider "CURRENT_PROVIDER" --target-id "CURRENT_SESSION_ID"
+```
+
+### Removing Cron Jobs
 ```bash
 yaocc cron remove "morning_greet"
 ```
 
 ## Workflow for Scripted Tasks
 
-To set up a complex check (e.g., "Check disk space"):
+To set up a complex check (e.g., "Check server status"):
 
-1. **Write the script** (using `file` skill):
+1. **Write the script** (using the `file_manager` skill):
    ```bash
-   yaocc file write scripts/check_disk.ps1 "Get-PSDrive C | Where-Object { $_.Free / $_.Used -lt 0.1 } | ForEach-Object { Write-Output 'WARNING: Disk C is low on space!' }"
+   yaocc file write scripts/check_status.js "fetch('https://example.com').then(r => console.log('Status:', r.status)).catch(e => console.error('Error:', e.message));"
    ```
 
-2. **Register the Cron Job**:
+2. **Register the Cron Job** (using Node.js to run the JavaScript file):
    ```bash
    # Simple Alert (Raw Output)
-   yaocc cron add --name "disk_check" --schedule "@hourly" --script "scripts/check_disk.ps1" --target-provider "telegram" --target-id "YOUR_CHAT_ID"
+   yaocc cron add --name "status_check" --schedule "*/5 * * * *" --script "scripts/check_status.js" --target-provider "CURRENT_PROVIDER" --target-id "CURRENT_SESSION_ID"
    ```
 
 3. **Result**:
-   - The Scheduler runs the script every hour.
-   - If the script outputs text (e.g., "WARNING..."), it is sent directly to your Telegram.
-   - The AI is NOT invoked, saving tokens and time.
+   - The Scheduler runs the script every 5 minutes.
+   - If the script outputs text (e.g., "Status: 200"), it is sent directly to your active chat.
+   - The AI is NOT invoked for the execution, saving tokens and time.

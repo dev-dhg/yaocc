@@ -1,8 +1,10 @@
-package skills
+package test
 
 import (
 	"path/filepath"
 	"testing"
+
+	"github.com/dev-dhg/yaocc/pkg/skills"
 )
 
 func TestLoader_Load(t *testing.T) {
@@ -11,7 +13,7 @@ func TestLoader_Load(t *testing.T) {
 		t.Fatalf("failed to get absolute path: %v", err)
 	}
 
-	loader := NewLoader([]string{testDataDir})
+	loader := skills.NewLoader([]string{testDataDir})
 	skills, err := loader.Load()
 	if err != nil {
 		t.Fatalf("Loader.Load() error = %v", err)

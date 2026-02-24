@@ -22,8 +22,17 @@ type Config struct {
 	Storage   StorageConfig             `json:"storage"`
 	Session   SessionConfig             `json:"session"`
 
+	UseNativeToolCalling bool                       `json:"useNativeToolCalling"` // default true
+	MCPServers           map[string]MCPServerConfig `json:"mcpServers,omitempty"`
+
 	Timezone string `json:"timezone,omitempty"` // e.g. "Europe/Berlin"
 	MaxTurns int    `json:"maxTurns,omitempty"` // Global max turns (default: 5)
+}
+
+type MCPServerConfig struct {
+	Command string            `json:"command"`
+	Args    []string          `json:"args,omitempty"`
+	Env     map[string]string `json:"env,omitempty"`
 }
 
 type SessionConfig struct {
@@ -80,6 +89,7 @@ type ModelConfig struct {
 	MaxTokens     int         `json:"maxTokens,omitempty"`
 	MaxTurns      int         `json:"maxTurns,omitempty"`  // Override global max turns
 	TimeoutMs     int         `json:"timeoutMs,omitempty"` // Model-specific timeout
+	Tool          *bool       `json:"tool,omitempty"`      // Set to false to disable native tools for this model
 }
 
 type CostConfig struct {
@@ -123,43 +133,43 @@ type ServerConfig struct {
 }
 
 type SkillsConfig struct {
-	Registered    map[string]string `json:"registered,omitempty"`    // map[name]path
-	UseSkillsBody SkillsBodyConfig  `json:"useSkillsBody,omitempty"` // bool or []string
+	Registered          map[string]string         `json:"registered,omitempty"`          // map[name]path
+	InjectFullSkillText InjectFullSkillTextConfig `json:"injectFullSkillText,omitempty"` // bool or []string
 }
 
-// SkillsBodyConfig allows useSkillsBody to be either a boolean or an array of strings
-type SkillsBodyConfig struct {
+// InjectFullSkillTextConfig allows injectFullSkillText to be either a boolean or an array of strings
+type InjectFullSkillTextConfig struct {
 	UseAll      bool
 	UseSpecific []string
 }
 
-// UnmarshalJSON implements custom JSON unmarshaling for SkillsBodyConfig.
-func (s *SkillsBodyConfig) UnmarshalJSON(data []byte) error {
+// UnmarshalJSON implements custom JSON parsing for InjectFullSkillTextConfig.
+func (c *InjectFullSkillTextConfig) UnmarshalJSON(data []byte) error {
 	// Try unmarshaling as a boolean first
 	var b bool
 	if err := json.Unmarshal(data, &b); err == nil {
-		s.UseAll = b
-		s.UseSpecific = nil
+		c.UseAll = b
+		c.UseSpecific = nil
 		return nil
 	}
 
 	// Try unmarshaling as an array of strings
 	var arr []string
 	if err := json.Unmarshal(data, &arr); err == nil {
-		s.UseAll = false
-		s.UseSpecific = arr
+		c.UseAll = false
+		c.UseSpecific = arr
 		return nil
 	}
 
-	return fmt.Errorf("useSkillsBody must be either a boolean or an array of strings")
+	return fmt.Errorf("injectFullSkillText must be either a boolean or an array of strings")
 }
 
-// MarshalJSON implements custom JSON marshaling for SkillsBodyConfig.
-func (s SkillsBodyConfig) MarshalJSON() ([]byte, error) {
-	if s.UseSpecific != nil {
-		return json.Marshal(s.UseSpecific)
+// MarshalJSON implements custom JSON marshaling for InjectFullSkillTextConfig.
+func (c InjectFullSkillTextConfig) MarshalJSON() ([]byte, error) {
+	if c.UseSpecific != nil {
+		return json.Marshal(c.UseSpecific)
 	}
-	return json.Marshal(s.UseAll)
+	return json.Marshal(c.UseAll)
 }
 
 type CmdConfig struct {
@@ -240,6 +250,9 @@ func LoadConfig(path string) (*Config, string, string, error) {
 	expandedData := os.ExpandEnv(string(data))
 
 	var cfg Config
+	// Set defaults *before* unmarshaling so JSON overrides it if present
+	cfg.UseNativeToolCalling = true
+
 	if err := json.Unmarshal([]byte(expandedData), &cfg); err != nil {
 		return nil, configDir, configPath, fmt.Errorf("failed to parse config file: %w", err)
 	}

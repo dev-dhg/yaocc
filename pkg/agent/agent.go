@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/dev-dhg/yaocc/pkg/config"
 	"github.com/dev-dhg/yaocc/pkg/llm"
+	"github.com/dev-dhg/yaocc/pkg/mcp"
 	"github.com/dev-dhg/yaocc/pkg/messaging"
 	"github.com/dev-dhg/yaocc/pkg/skills"
 )
@@ -31,6 +33,37 @@ type Agent struct {
 	LogFile    string
 	configDir  string
 	SummaryLLM *llm.Client
+	MCPServers map[string]*mcp.Client
+}
+
+// GetCurrentModel returns the selected model configuration, or nil if not found.
+func (a *Agent) GetCurrentModel() *config.ModelConfig {
+	selectedModel := a.Config.Models.Selected
+	if strings.Contains(selectedModel, "/") {
+		parts := strings.SplitN(selectedModel, "/", 2)
+		pKey, mID := parts[0], parts[1]
+		if p, ok := a.Config.Models.Providers[pKey]; ok {
+			for _, m := range p.Models {
+				if m.ID == mID {
+					return &m
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// IsNativeToolCallingEnabled intelligently checks if Native Tool Calling is globally enabled,
+// and respects the currently selected Model's *Tool boolean override (downgrading if set to false).
+func (a *Agent) IsNativeToolCallingEnabled() bool {
+	if !a.Config.UseNativeToolCalling {
+		return false
+	}
+	m := a.GetCurrentModel()
+	if m != nil && m.Tool != nil && !*m.Tool {
+		return false
+	}
+	return true
 }
 
 func NewAgent(cfg *config.Config, configDir string, verbose bool, logFile string) (*Agent, error) {
@@ -94,22 +127,45 @@ func NewAgent(cfg *config.Config, configDir string, verbose bool, logFile string
 	sessions := NewSessionManager(sessionsDir)
 
 	agent := &Agent{
-		Config:    cfg,
-		Skills:    loadedSkills,
-		Soul:      soul,
-		Identity:  identity,
-		User:      user,
-		Rules:     agentsRules,
-		Memory:    finalMemory,
-		Sessions:  sessions,
-		Verbose:   verbose,
-		LogFile:   logFile,
-		configDir: configDir,
+		Config:     cfg,
+		Skills:     loadedSkills,
+		Soul:       soul,
+		Identity:   identity,
+		User:       user,
+		Rules:      agentsRules,
+		Memory:     finalMemory,
+		Sessions:   sessions,
+		Verbose:    verbose,
+		LogFile:    logFile,
+		configDir:  configDir,
+		MCPServers: make(map[string]*mcp.Client),
 	}
 
 	// Initialize LLM
 	if err := agent.initLLM(); err != nil {
 		return nil, err
+	}
+
+	// Initialize MCP Servers if UseNativeToolCalling is true
+	if cfg.UseNativeToolCalling && len(cfg.MCPServers) > 0 {
+		log.Printf("Initializing %d MCP servers...", len(cfg.MCPServers))
+		for name, mcpCfg := range cfg.MCPServers {
+			client, err := mcp.NewClient(name, mcpCfg.Command, mcpCfg.Args, mcpCfg.Env)
+			if err != nil {
+				log.Printf("Failed to start MCP server '%s': %v", name, err)
+				continue
+			}
+
+			_, err = client.Initialize()
+			if err != nil {
+				log.Printf("Failed to initialize MCP server '%s': %v", name, err)
+				client.Close()
+				continue
+			}
+
+			log.Printf("Successfully initialized MCP server '%s'", name)
+			agent.MCPServers[name] = client
+		}
 	}
 
 	return agent, nil
@@ -251,7 +307,7 @@ func (a *Agent) Run(sessionID string, provider messaging.Provider, chatID, input
 	}
 
 	// 2. Construct System Prompt
-	sysPrompt := a.GetSystemPrompt(provider)
+	sysPrompt := a.GetSystemPrompt(provider, chatID)
 
 	// 3. Build Message List
 	messages := []llm.Message{
@@ -273,23 +329,9 @@ func (a *Agent) Run(sessionID string, provider messaging.Provider, chatID, input
 	}
 
 	// Check for model-specific override
-	// We need to find the current model config
-	// This is a bit inefficient to look up every time, but acceptable for now.
-	// Ideally Agent should store the current ModelConfig.
-	// Let's look it up from a.Config.Models based on a.Config.Models.Selected
-	selectedModel := a.Config.Models.Selected
-	if strings.Contains(selectedModel, "/") {
-		parts := strings.SplitN(selectedModel, "/", 2)
-		pKey, mID := parts[0], parts[1]
-		if p, ok := a.Config.Models.Providers[pKey]; ok {
-			for _, m := range p.Models {
-				if m.ID == mID {
-					if m.MaxTurns > 0 {
-						maxTurns = m.MaxTurns
-					}
-					break
-				}
-			}
+	if m := a.GetCurrentModel(); m != nil {
+		if m.MaxTurns > 0 {
+			maxTurns = m.MaxTurns
 		}
 	}
 
@@ -308,14 +350,24 @@ func (a *Agent) Run(sessionID string, provider messaging.Provider, chatID, input
 			}
 		}
 
-		response, err := a.LLM.Chat(messages)
+		var response string
+		var toolCalls []llm.ToolCall
+		var err error
+
+		if a.IsNativeToolCallingEnabled() {
+			tools := a.GetTools()
+			response, toolCalls, err = a.LLM.Chat(messages, tools)
+		} else {
+			response, toolCalls, err = a.LLM.Chat(messages, nil)
+		}
+
 		if err != nil {
 			return "", fmt.Errorf("LLM error: %w", err)
 		}
 
 		// LOGGING RESPONSE
 		if a.Verbose {
-			respContent := fmt.Sprintf("=== RESPONSE (Turn %d) ===\n%s\n==========================\n", i+1, response)
+			respContent := fmt.Sprintf("=== RESPONSE (Turn %d) ===\n%s\nToolCalls: %d\n==========================\n", i+1, response, len(toolCalls))
 			if a.LogFile != "" {
 				f, err := os.OpenFile(a.LogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 				if err == nil {
@@ -328,29 +380,184 @@ func (a *Agent) Run(sessionID string, provider messaging.Provider, chatID, input
 		}
 
 		// Save Assistant Response
-		// Check for tool calls (bash code blocks)
-		commands := parseCommands(response)
 
-		if len(commands) == 0 {
-			// Normal response, save to history
-			if err := a.Sessions.Append(sessionID, "assistant", response); err != nil {
-				log.Printf("Error appending assistant message: %v", err)
+		// Determine commands based on mode
+		var commands []string
+		if len(toolCalls) > 0 {
+			// Save the assistant message with tool calls
+			messages = append(messages, llm.Message{Role: "assistant", Content: response, ToolCalls: toolCalls})
+
+			// Process each tool call
+			for _, tc := range toolCalls {
+				toolResult := ""
+
+				// Route local yaocc skills
+				if strings.HasPrefix(tc.Function.Name, "yaocc_") {
+					var rawArgs map[string]interface{}
+					if err := json.Unmarshal([]byte(tc.Function.Arguments), &rawArgs); err == nil {
+
+						currentProvider := "unknown"
+						if provider != nil {
+							currentProvider = provider.Name()
+						}
+
+						// Replace placeholders in all string arguments
+						for k, v := range rawArgs {
+							if strVal, ok := v.(string); ok {
+								strVal = strings.ReplaceAll(strVal, "CURRENT_PROVIDER", currentProvider)
+								strVal = strings.ReplaceAll(strVal, "CURRENT_SESSION_ID", chatID)
+								rawArgs[k] = strVal
+							} else if arrVal, ok := v.([]interface{}); ok {
+								for i, elem := range arrVal {
+									if strElem, ok := elem.(string); ok {
+										strElem = strings.ReplaceAll(strElem, "CURRENT_PROVIDER", currentProvider)
+										strElem = strings.ReplaceAll(strElem, "CURRENT_SESSION_ID", chatID)
+										arrVal[i] = strElem
+									}
+								}
+							}
+						}
+
+						if tc.Function.Name == "yaocc_exec" {
+							if cmd, ok := rawArgs["command"].(string); ok {
+								toolResult, _ = executeCommand(cmd)
+							}
+						} else if tc.Function.Name == "yaocc_skills_run" {
+							name, _ := rawArgs["name"].(string)
+							args, _ := rawArgs["args"].(string)
+							cmd := fmt.Sprintf("yaocc %s %s", name, args)
+							toolResult, _ = executeCommand(cmd)
+						} else if strings.HasSuffix(tc.Function.Name, "_usage") {
+							// Dedicated Usage Tool interception
+							baseName := strings.TrimSuffix(tc.Function.Name, "_usage")
+							skillNameRaw := strings.TrimPrefix(baseName, "yaocc_")
+							skillNameDashed := strings.ReplaceAll(skillNameRaw, "_", "-")
+
+							content := "Documentation not found."
+							actualName := skillNameRaw
+							for _, s := range a.Skills {
+								if s.Name == skillNameRaw || s.Name == skillNameDashed {
+									content = s.Content
+									actualName = s.Name
+									break
+								}
+							}
+							toolResult = fmt.Sprintf("=== USAGE MANUAL for %s ===\n%s\n=====================", actualName, content)
+						} else {
+							// Normal explicitly-typed or generic fallback skill
+							// Try to build structured bash commands from explicitly mapped tool parameter keys inside tools.go
+							if builtCmd, err := BuildBuiltinCommandArgs(tc.Function.Name, rawArgs); err == nil {
+								cmd := exec.Command(resolveCLIPath(), builtCmd...)
+								out, err := cmd.CombinedOutput()
+								toolResult = string(out)
+								if err != nil && toolResult == "" {
+									toolResult = err.Error()
+								}
+							} else {
+								// Fallback for custom generic internal skills missing static tools.go mappings
+								skillNameRaw := strings.TrimPrefix(tc.Function.Name, "yaocc_")
+								skillNameDashed := strings.ReplaceAll(skillNameRaw, "_", "-")
+
+								skillName := skillNameRaw
+								for _, s := range a.Skills {
+									if s.Name == skillNameRaw || s.Name == skillNameDashed {
+										skillName = s.Name
+										break
+									}
+								}
+
+								args := ""
+								if a, ok := rawArgs["args"].(string); ok {
+									args = a
+								}
+								cmd := fmt.Sprintf("yaocc %s %s", skillName, args)
+								toolResult, _ = executeCommand(cmd)
+							}
+						}
+					} else {
+						toolResult = fmt.Sprintf("Error parsing arguments: %v", err)
+					}
+				} else if strings.HasPrefix(tc.Function.Name, "mcp_") {
+					// Route to MCP server: mcp_<server>_<tool>
+					parts := strings.SplitN(strings.TrimPrefix(tc.Function.Name, "mcp_"), "_", 2)
+					if len(parts) == 2 {
+						serverName := parts[0]
+						toolName := parts[1]
+
+						if client, ok := a.MCPServers[serverName]; ok {
+							var args interface{}
+							json.Unmarshal([]byte(tc.Function.Arguments), &args)
+							res, err := client.CallTool(toolName, args)
+							if err != nil {
+								toolResult = fmt.Sprintf("Error returning tool call %s: %v", toolName, err)
+							} else {
+								// Format MCP response
+								var sb strings.Builder
+								for _, content := range res.Content {
+									if content.Type == "text" {
+										sb.WriteString(content.Text + "\n")
+									} else {
+										sb.WriteString(fmt.Sprintf("[%s content]\n", content.Type))
+									}
+								}
+								if res.IsError {
+									toolResult = "Execution resulted in an error:\n" + sb.String()
+								} else {
+									toolResult = sb.String()
+								}
+							}
+						} else {
+							toolResult = fmt.Sprintf("MCP server %s not found", serverName)
+						}
+					}
+				}
+
+				// LOGGING TOOL EXECUTION
+				if a.Verbose {
+					fmt.Printf("\n🔧 Tool Executed: %s\n   Args: %s\n", tc.Function.Name, tc.Function.Arguments)
+					if a.LogFile != "" {
+						toolLog := fmt.Sprintf("=== TOOL EXECUTION ===\nName: %s\nArgs: %s\nOutput:\n%s\n======================\n", tc.Function.Name, tc.Function.Arguments, toolResult)
+						f, err := os.OpenFile(a.LogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+						if err == nil {
+							f.WriteString(toolLog)
+							f.Close()
+						}
+					}
+				}
+
+				// Append tool response
+				messages = append(messages, llm.Message{
+					Role:       "tool",
+					Content:    toolResult,
+					ToolCallID: tc.ID,
+					Name:       tc.Function.Name,
+				})
 			}
-			// Trigger async summarization for single turn response
-			if a.Config.Session.Summarize {
-				go a.UpdateSessionSummary(sessionID)
+
+			// We have processed tools, continue react loop
+			continue
+		} else if !a.IsNativeToolCallingEnabled() {
+			// Fallback: Check for tool calls (bash code blocks)
+			commands = parseCommands(response)
+			if len(commands) > 0 {
+				messages = append(messages, llm.Message{Role: "assistant", Content: response})
+				toolOutput := a.HandleCommands(sessionID, provider, chatID, commands)
+				messages = append(messages, llm.Message{Role: "user", Content: toolOutput})
+				continue
 			}
 		}
 
-		messages = append(messages, llm.Message{Role: "assistant", Content: response})
-		if len(commands) == 0 {
-			return response, nil
+		// If no tools were called in either flow, this is the final final response.
+		// Normal response, save to history
+		if err := a.Sessions.Append(sessionID, "assistant", response); err != nil {
+			log.Printf("Error appending assistant message: %v", err)
+		}
+		// Trigger async summarization for single turn response
+		if a.Config.Session.Summarize {
+			go a.UpdateSessionSummary(sessionID)
 		}
 
-		toolOutput := a.HandleCommands(sessionID, provider, chatID, commands)
-		// Save Tool Output
-
-		messages = append(messages, llm.Message{Role: "user", Content: toolOutput})
+		return response, nil
 	}
 
 	// Trigger async summarization
@@ -416,7 +623,7 @@ func (a *Agent) RunTask(sessionID, prompt, contextMsg string) (string, error) {
 	}
 
 	// Call LLM
-	response, err := a.LLM.Chat(messages)
+	response, _, err := a.LLM.Chat(messages, nil)
 	if err != nil {
 		log.Printf("RunTask: LLM error: %v", err)
 		return "", err
@@ -461,7 +668,7 @@ func (a *Agent) GetBaseSystemPrompt() string {
 	return sb.String()
 }
 
-func (a *Agent) GetSystemPrompt(provider messaging.Provider) string {
+func (a *Agent) GetSystemPrompt(provider messaging.Provider, chatID string) string {
 	var sb strings.Builder
 
 	// Inject current date/time
@@ -484,9 +691,15 @@ func (a *Agent) GetSystemPrompt(provider messaging.Provider) string {
 	// Dynamic Skills List
 	sb.WriteString("Available Skills:\n<available_skills>\n")
 	for _, skill := range a.Skills {
-		useBody := a.Config.Skills.UseSkillsBody.UseAll
-		if !useBody && a.Config.Skills.UseSkillsBody.UseSpecific != nil {
-			for _, s := range a.Config.Skills.UseSkillsBody.UseSpecific {
+		// If native tools are enabled, built-in skills are provided strictly via the JSON schema.
+		// Avoid polluting the text prompt with them.
+		if a.IsNativeToolCallingEnabled() && skill.IsBuiltIn() {
+			continue
+		}
+
+		useBody := a.Config.Skills.InjectFullSkillText.UseAll
+		if !useBody && a.Config.Skills.InjectFullSkillText.UseSpecific != nil {
+			for _, s := range a.Config.Skills.InjectFullSkillText.UseSpecific {
 				if s == skill.Name {
 					useBody = true
 					break
@@ -505,9 +718,15 @@ func (a *Agent) GetSystemPrompt(provider messaging.Provider) string {
 	sb.WriteString("</available_skills>\n")
 
 	// Tool Usage Instructions (from TOOLS.md)
-	toolsInstruction := readFileOrDefault(filepath.Join(a.ConfigDir(), "TOOLS.md"), "Usage instructions not found.")
-	sb.WriteString("\n## Tool Execution\n")
-	sb.WriteString(toolsInstruction)
+	if !a.IsNativeToolCallingEnabled() {
+		toolsInstruction := readFileOrDefault(filepath.Join(a.ConfigDir(), "TOOLS.md"), "Usage instructions not found.")
+		sb.WriteString("\n## Tool Execution\n")
+		sb.WriteString("You MUST use the bash code blocks to execute tools:\n")
+		sb.WriteString(toolsInstruction)
+	} else {
+		sb.WriteString("\n## Tool Execution\n")
+		sb.WriteString("You have access to native tools. ALWAYS use the provided tool-calling capability to execute your actions instead of raw bash code blocks.\n")
+	}
 
 	sb.WriteString("\n## Media & Special Outputs\n")
 	sb.WriteString("You can send media files (Images, Audio, Video, Documents) by outputting a specific prefix followed by the URL or local path.\n")
@@ -520,10 +739,18 @@ func (a *Agent) GetSystemPrompt(provider messaging.Provider) string {
 
 	// Inject Provider Instruction
 	if provider != nil {
+		sb.WriteString(fmt.Sprintf("\n## Current Session Context\n"))
+		sb.WriteString(fmt.Sprintf("You are currently communicating in a '%s' session.\n", provider.Name()))
+		// Only instruct on placeholders without leaking the concrete session ID
+		sb.WriteString("When scheduling jobs or tasks for the current user, use 'CURRENT_PROVIDER' and 'CURRENT_SESSION_ID' as placeholders for target provider/id. They will be automatically replaced with these session values by the system.\n")
+
 		instruction := provider.SystemPromptInstruction()
 		if instruction != "" {
-			sb.WriteString(instruction)
+			sb.WriteString("\n" + instruction + "\n")
 		}
+	} else if chatID != "" {
+		sb.WriteString(fmt.Sprintf("\n## Current Session Context\n"))
+		sb.WriteString("When scheduling jobs or tasks for the current user, use 'CURRENT_PROVIDER' and 'CURRENT_SESSION_ID' as placeholders for target provider/id. They will be automatically replaced with these session values by the system.\n")
 	}
 
 	return sb.String()
@@ -549,8 +776,8 @@ func (a *Agent) HandleCommands(sessionID string, provider messaging.Provider, ch
 	var outputSb strings.Builder
 	for _, cmd := range commands {
 		// Replace Placeholders
-		cmd = strings.ReplaceAll(cmd, "YOUR_PROVIDER", currentProvider)
-		cmd = strings.ReplaceAll(cmd, "YOUR_CHAT_ID", currentID)
+		cmd = strings.ReplaceAll(cmd, "CURRENT_PROVIDER", currentProvider)
+		cmd = strings.ReplaceAll(cmd, "CURRENT_SESSION_ID", currentID)
 
 		log.Printf("Executing command: %s", cmd)
 		out, err := executeCommand(cmd)
@@ -580,6 +807,19 @@ func parseCommands(content string) []string {
 	return commands
 }
 
+func resolveCLIPath() string {
+	exePath, err := os.Executable()
+	if err == nil {
+		dir := filepath.Dir(exePath)
+		cliName := "yaocc"
+		if runtime.GOOS == "windows" {
+			cliName += ".exe"
+		}
+		return filepath.Join(dir, cliName)
+	}
+	return "yaocc"
+}
+
 func executeCommand(cmdStr string) (string, error) {
 	// split command and args
 	// accurate splitting handles quotes? for now simple split
@@ -587,31 +827,124 @@ func executeCommand(cmdStr string) (string, error) {
 
 	// Handle yaocc command alias
 	if strings.HasPrefix(strings.TrimSpace(cmdStr), "yaocc") {
-		exePath, err := os.Executable()
-		if err == nil {
-			// On Windows, os.Executable gives the path to the running executable (server).
-			// We want the CLI (yaocc.exe), not the server (yaocc-server.exe).
-			// Actually, in this dev setup, they are separate binaries.
-			// But we can assume they are in the same dir.
-			dir := filepath.Dir(exePath)
-			cliName := "yaocc"
-			if runtime.GOOS == "windows" {
-				cliName += ".exe"
-			}
-			cliPath := filepath.Join(dir, cliName)
-			cmdStr = strings.Replace(cmdStr, "yaocc", cliPath, 1)
-		}
+		cliPath := resolveCLIPath()
+		cmdStr = strings.Replace(cmdStr, "yaocc", cliPath, 1)
 	}
 
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
-		cmd = exec.Command("powershell", "-Command", cmdStr)
+		cmd = exec.Command("cmd", "/c", cmdStr)
 	} else {
 		cmd = exec.Command("sh", "-c", cmdStr)
 	}
 
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+// GetTools maps active skills and registered MCP tools into the LLM Tool schema.
+func (a *Agent) GetTools() []llm.Tool {
+	var tools []llm.Tool
+
+	// 1. Map existing skills as fallback generic tools
+	// Since yaocc skills don't have strict JSON schemas in SKILL.md yet,
+	// we map them to a single argument "args" string.
+	for _, skill := range a.Skills {
+		if !skill.IsBuiltIn() {
+			continue // Only built-in/system skills are injected natively. Custom skills remain in <available_skills>
+		}
+
+		if !a.Config.IsCmdEnabled(skill.Name) {
+			continue // Respect config disabling rules
+		}
+
+		if skill.Name == "exec" {
+			continue // Prevent duplication: Handled separately below with a strict schema (command instead of generic args)
+		}
+
+		// Inject standalone usage helper tool
+		tools = append(tools, llm.Tool{
+			Type: "function",
+			Function: llm.ToolFunction{
+				Name:        fmt.Sprintf("yaocc_%s_usage", strings.ReplaceAll(skill.Name, "-", "_")),
+				Description: fmt.Sprintf("Retrieve the full markdown manual, available arguments, and examples for the '%s' command", skill.Name),
+				Parameters: map[string]interface{}{
+					"type":       "object",
+					"properties": map[string]interface{}{},
+				},
+			},
+		})
+
+		// Inject structured schema if static mapping exists
+		if structuredTools := GetBuiltinToolSchemas(skill.Name, skill.Description); structuredTools != nil {
+			tools = append(tools, structuredTools...)
+		} else {
+			// Built-in fallback generic args injection
+			tools = append(tools, llm.Tool{
+				Type: "function",
+				Function: llm.ToolFunction{
+					Name:        fmt.Sprintf("yaocc_%s", strings.ReplaceAll(skill.Name, "-", "_")),
+					Description: skill.Description,
+					Parameters: map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"args": map[string]interface{}{
+								"type":        "string",
+								"description": "Arguments to pass to the tool command. E.g. for 'yaocc skills get foo' pass 'get foo'.",
+							},
+						},
+					},
+				},
+			})
+		}
+	}
+
+	// 2. Add special built-in command mappings
+	// We'll expose `yaocc exec` individually if enabled.
+	if a.Config.IsCmdEnabled("exec") {
+		tools = append(tools, llm.Tool{
+			Type: "function",
+			Function: llm.ToolFunction{
+				Name:        "yaocc_exec",
+				Description: "Executes a shell command on the host machine. e.g ls -la",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"command": map[string]interface{}{
+							"type":        "string",
+							"description": "The exact shell command string to execute.",
+						},
+					},
+					"required": []string{"command"},
+				},
+			},
+		})
+	}
+
+	// 3. Aggregate Tools from MCP Servers
+	if a.IsNativeToolCallingEnabled() && len(a.MCPServers) > 0 {
+		for srvName, client := range a.MCPServers {
+			mcpTools, err := client.GetTools()
+			if err != nil {
+				log.Printf("Failed to get tools from MCP server %s: %v", srvName, err)
+				continue
+			}
+
+			// Wrap MCP tools with their server name prefix to avoid collision
+			for _, t := range mcpTools {
+				tools = append(tools, llm.Tool{
+					Type: "function",
+					Function: llm.ToolFunction{
+						Name:        fmt.Sprintf("mcp_%s_%s", srvName, t.Name),
+						Description: t.Description,
+						Parameters:  t.InputSchema,
+					},
+				})
+			}
+		}
+	}
+
+	return tools
 }
 
 func (a *Agent) UpdateSessionSummary(sessionID string) {
@@ -696,7 +1029,7 @@ func (a *Agent) UpdateSessionSummary(sessionID string) {
 		{Role: "user", Content: prompt},
 	}
 
-	newSummary, err := a.SummaryLLM.Chat(summaryMsg)
+	newSummary, _, err := a.SummaryLLM.Chat(summaryMsg, nil)
 	if err != nil {
 		log.Printf("Failed to generate summary: %v", err)
 		return

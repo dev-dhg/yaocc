@@ -1,4 +1,4 @@
-package cron
+package test
 
 import (
 	"testing"
@@ -6,6 +6,7 @@ import (
 
 	"github.com/dev-dhg/yaocc/pkg/agent"
 	"github.com/dev-dhg/yaocc/pkg/config"
+	"github.com/dev-dhg/yaocc/pkg/cron"
 	"github.com/dev-dhg/yaocc/pkg/messaging"
 )
 
@@ -16,7 +17,7 @@ func TestNewScheduler_Timezone(t *testing.T) {
 
 	t.Run("Default Timezone (Empty)", func(t *testing.T) {
 		cfg := &config.Config{}
-		s := NewScheduler(cfg, ".", a, providers)
+		s := cron.NewScheduler(cfg, ".", a, providers)
 		if s.Cron.Location() != time.Local {
 			t.Errorf("Expected Local timezone, got %v", s.Cron.Location())
 		}
@@ -26,7 +27,7 @@ func TestNewScheduler_Timezone(t *testing.T) {
 		cfg := &config.Config{
 			Timezone: "UTC",
 		}
-		s := NewScheduler(cfg, ".", a, providers)
+		s := cron.NewScheduler(cfg, ".", a, providers)
 		if s.Cron.Location().String() != "UTC" {
 			t.Errorf("Expected UTC timezone, got %v", s.Cron.Location())
 		}
@@ -43,7 +44,7 @@ func TestNewScheduler_Timezone(t *testing.T) {
 		cfg := &config.Config{
 			Timezone: locName,
 		}
-		s := NewScheduler(cfg, ".", a, providers)
+		s := cron.NewScheduler(cfg, ".", a, providers)
 		if s.Cron.Location().String() != loc.String() {
 			t.Errorf("Expected %s timezone, got %v", locName, s.Cron.Location())
 		}
@@ -53,7 +54,7 @@ func TestNewScheduler_Timezone(t *testing.T) {
 		cfg := &config.Config{
 			Timezone: "Invalid/Timezone",
 		}
-		s := NewScheduler(cfg, ".", a, providers)
+		s := cron.NewScheduler(cfg, ".", a, providers)
 		// Should fall back to Local
 		if s.Cron.Location() != time.Local {
 			t.Errorf("Expected Local timezone fallback, got %v", s.Cron.Location())

@@ -1,6 +1,8 @@
 ---
 name: fetch
 description: Fetch the content of a URL (HTTP GET).
+tags:
+  - built-in
 ---
 
 To fetch the content of a specific URL, use the `fetch` command.

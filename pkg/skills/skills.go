@@ -14,10 +14,21 @@ import (
 type Skill struct {
 	Name        string                 `yaml:"name"`
 	Description string                 `yaml:"description"`
+	Tags        []string               `yaml:"tags,omitempty"`
 	Homepage    string                 `yaml:"homepage"`
 	Metadata    map[string]interface{} `yaml:"metadata"`
 	Content     string                 `yaml:"-"` // Markdown content
 	Path        string                 `yaml:"-"`
+}
+
+func (s *Skill) IsBuiltIn() bool {
+	for _, tag := range s.Tags {
+		t := strings.ToLower(strings.TrimSpace(tag))
+		if t == "built-in" || t == "system" {
+			return true
+		}
+	}
+	return false
 }
 
 type Loader struct {

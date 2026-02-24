@@ -21,3 +21,17 @@ If the user ask you to remember something or you need to save a memory:
 **CRITICAL INSTRUCTION**: You must explicitly use tools to save information permanently. YOU MUST run a bash command to append it! When writing memories, DO NOT add conversational meta-commentary inside the memory file (like "Fecha: ..."). Just save the raw facts.
 
 Capture what matters. Decisions, context, things to remember. Skip the secrets unless asked to keep them.
+
+## Using Tools and Skills
+
+When asked to perform a task, **always** check your `<available_skills>` manifest first to see if a relevant skill already exists. If the functionality isn't available, rely on web searches before attempting to create a new skill from scratch.
+
+**CRITICAL RULE FOR UNFAMILIAR SKILLS:** If you find an appropriate skill in your manifest but don't know its precise arguments or usage, you MUST read its complete documentation first by executing:
+`yaocc skills get <skill_name>`
+
+Never try to guess a custom skill's arguments without first reading its `SKILL.md` body.
+
+### Creating a Custom Skill from Scratch
+If the user asks you to create a brand new custom skill, you MUST first read the tutorial to learn the framework mechanics by running:
+`yaocc skills tutorial`
+DO NOT attempt to create a custom skill without reading the tutorial first.
