@@ -49,3 +49,36 @@ func WatchConfig(path string, onChange func(*Config)) {
 		}
 	}
 }
+
+// WatchFile polls a generic file for changes and calls onChange when a change is detected.
+// Unlike WatchConfig, this does not check for a lock file since the separate files
+// (cron.json, skills_register.json) are designed to be independently updated.
+func WatchFile(path string, onChange func()) {
+	var lastModTime time.Time
+
+	// Initial check
+	info, err := os.Stat(path)
+	if err == nil {
+		lastModTime = info.ModTime()
+	}
+
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		info, err := os.Stat(path)
+		if err != nil {
+			// File might not exist yet, that's ok
+			if !os.IsNotExist(err) {
+				log.Printf("Error watching file %s: %v", path, err)
+			}
+			continue
+		}
+
+		if info.ModTime().After(lastModTime) {
+			lastModTime = info.ModTime()
+			log.Printf("File change detected: %s, triggering reload...", path)
+			onChange()
+		}
+	}
+}

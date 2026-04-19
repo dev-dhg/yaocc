@@ -35,9 +35,20 @@ go build -o yaocc-server.exe ./cmd/yaocc-server
 
 ## Configuration
 
-YAOCC uses a `config.json` file for configuration.
-- Copy `config.json.example` to `config.json`.
-- Environment variables can be used in the config file using `${VAR_NAME}` syntax.
+YAOCC uses a split configuration architecture:
+- **`config.json`**: General settings (models, messaging, server, storage, websearch, session, etc.).
+- **`cron.json`**: Cron job definitions (independently watched, changes only reload the scheduler).
+- **`skills_register.json`**: Registered custom skills (independently watched, no agent restart needed).
+
+Copy the example files to get started:
+- `config.json.example` → `config.json`
+- `cron.json.example` → `cron.json`
+- `skills_register.json.example` → `skills_register.json`
+
+Environment variables can be used in config files using `${VAR_NAME}` syntax.
+
+### Automatic Migration
+If you have an existing `config.json` with `cron` or `skills.registered` fields, YAOCC will automatically migrate them to `cron.json` and `skills_register.json` on first startup and clean up the old fields from `config.json`.
 
 ## Testing
 
@@ -108,6 +119,19 @@ To send media files, the Agent (or any Skill) should output a message starting w
 
 **Base64 Support**:
 If a tool outputs raw base64 data for an image, use `#BASE64_IMAGE#:<data>`. The Message Client will automatically convert this to a temporary file and send it as an image.
+
+### Provider-Specific Formatting
+
+Each messaging provider can inject specific formatting instructions into the Agent's system prompt via `SystemPromptInstruction()`.
+
+**Telegram Formatting (HTML)**:
+Current Telegram implementation uses `parse_mode: HTML`. To ensure rich formatting works correctly, the Agent is instructed to:
+- Use standard tags like `<b>`, `<i>`, `<u>`, `<s>`, `<a>`.
+- Use specialized tags like `<tg-spoiler>`, `<tg-emoji>`, and `<tg-time>`.
+- Use `<b>` for headlines (Markdown `#` headers are ignored).
+- Use `&lt;`, `&gt;`, and `&amp;` for escaping literal characters.
+- Represent tables using ASCII formatting inside `<pre>` or `<blockquote>` blocks.
+- Use horizontal separators (e.g., `———`) for visual spacing.
 
 ### Extensibility
 

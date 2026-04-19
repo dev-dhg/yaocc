@@ -76,3 +76,51 @@ func UpdateConfigRawWithPath(path string, modifier func(*Config) error) error {
 
 	return nil
 }
+
+// UpdateCronRaw reads cron.json, applies a modifier, and writes it back.
+// This does NOT touch config.json at all.
+func UpdateCronRaw(modifier func([]CronJob) ([]CronJob, error)) error {
+	_ = godotenv.Load()
+	configDir := ResolveConfigDir()
+	return UpdateCronRawWithDir(configDir, modifier)
+}
+
+// UpdateCronRawWithDir reads cron.json from a specific directory, applies modifier, and writes back.
+func UpdateCronRawWithDir(configDir string, modifier func([]CronJob) ([]CronJob, error)) error {
+	jobs, err := LoadCronJobs(configDir)
+	if err != nil {
+		return err
+	}
+	if jobs == nil {
+		jobs = []CronJob{}
+	}
+
+	jobs, err = modifier(jobs)
+	if err != nil {
+		return err
+	}
+
+	return SaveCronJobs(configDir, jobs)
+}
+
+// UpdateSkillsRegisterRaw reads skills_register.json, applies a modifier, and writes it back.
+// This does NOT touch config.json at all.
+func UpdateSkillsRegisterRaw(modifier func(*SkillsRegister) error) error {
+	_ = godotenv.Load()
+	configDir := ResolveConfigDir()
+	return UpdateSkillsRegisterRawWithDir(configDir, modifier)
+}
+
+// UpdateSkillsRegisterRawWithDir reads skills_register.json from a specific directory, applies modifier, and writes back.
+func UpdateSkillsRegisterRawWithDir(configDir string, modifier func(*SkillsRegister) error) error {
+	reg, err := LoadSkillsRegister(configDir)
+	if err != nil {
+		return err
+	}
+
+	if err := modifier(reg); err != nil {
+		return err
+	}
+
+	return SaveSkillsRegister(configDir, reg)
+}

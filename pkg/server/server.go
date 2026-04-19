@@ -181,12 +181,20 @@ func (s *Server) handleCronRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Index < 0 || req.Index >= len(s.Config.Cron) {
-		http.Error(w, fmt.Sprintf("Invalid job index: %d (available: 0-%d)", req.Index, len(s.Config.Cron)-1), http.StatusBadRequest)
+	// Load cron jobs fresh from cron.json to ensure we have the latest
+	configDir := s.Agent.ConfigDir()
+	jobs, err := config.LoadCronJobs(configDir)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Error loading cron jobs: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	job := s.Config.Cron[req.Index]
+	if req.Index < 0 || req.Index >= len(jobs) {
+		http.Error(w, fmt.Sprintf("Invalid job index: %d (available: 0-%d)", req.Index, len(jobs)-1), http.StatusBadRequest)
+		return
+	}
+
+	job := jobs[req.Index]
 	log.Printf("Manually triggered cron job: %s (index: %d)", job.Name, req.Index)
 
 	// Run asynchronously so the API returns immediately

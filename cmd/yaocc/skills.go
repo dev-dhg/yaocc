@@ -20,8 +20,8 @@ func runSkills(args []string) {
 
 	cmd := args[0]
 
-	// Load config to manage skills
-	cfg, configDir, _, err := config.LoadConfig("")
+	// Load config for general settings (configDir, etc.)
+	_, configDir, _, err := config.LoadConfig("")
 	if err != nil {
 		fmt.Printf("Error loading configuration: %v\n", err)
 		return
@@ -54,7 +54,6 @@ func runSkills(args []string) {
 		}
 
 		// Validation: Check if script exists
-		configDir := config.ResolveConfigDir()
 		resolvedPath, err := resolveSafePath(configDir, scriptPath)
 		if err != nil {
 			fmt.Printf("Error resolving script path: %v\n", err)
@@ -65,24 +64,17 @@ func runSkills(args []string) {
 			return
 		}
 
-		// Acquire Lock to prevent server reload
-		if err := config.AcquireConfigLock(); err != nil {
-			fmt.Printf("Warning: Failed to acquire config lock: %v. Proceeding anyway.\n", err)
-		} else {
-			defer config.ReleaseConfigLock()
-		}
-
-		// Register using UpdateConfigRaw
-		err = config.UpdateConfigRaw(func(cfg *config.Config) error {
-			if cfg.Skills.Registered == nil {
-				cfg.Skills.Registered = make(map[string]string)
+		// Update skills_register.json directly (no config lock needed)
+		err = config.UpdateSkillsRegisterRaw(func(reg *config.SkillsRegister) error {
+			if reg.Registered == nil {
+				reg.Registered = make(map[string]string)
 			}
-			cfg.Skills.Registered[name] = scriptPath
+			reg.Registered[name] = scriptPath
 			return nil
 		})
 
 		if err != nil {
-			fmt.Printf("Error updating configuration: %v\n", err)
+			fmt.Printf("Error updating skills_register.json: %v\n", err)
 			return
 		}
 		fmt.Printf("Skill '%s' registered successfully linked to '%s'.\n", name, scriptPath)
@@ -95,26 +87,20 @@ func runSkills(args []string) {
 		}
 		name := args[1]
 
-		// Acquire Lock to prevent server reload
-		if err := config.AcquireConfigLock(); err != nil {
-			fmt.Printf("Warning: Failed to acquire config lock: %v. Proceeding anyway.\n", err)
-		} else {
-			defer config.ReleaseConfigLock()
-		}
-
-		err := config.UpdateConfigRaw(func(cfg *config.Config) error {
-			if cfg.Skills.Registered == nil {
+		// Update skills_register.json directly (no config lock needed)
+		err := config.UpdateSkillsRegisterRaw(func(reg *config.SkillsRegister) error {
+			if reg.Registered == nil || len(reg.Registered) == 0 {
 				return fmt.Errorf("no registered skills found")
 			}
-			if _, exists := cfg.Skills.Registered[name]; !exists {
+			if _, exists := reg.Registered[name]; !exists {
 				return fmt.Errorf("skill '%s' not found", name)
 			}
-			delete(cfg.Skills.Registered, name)
+			delete(reg.Registered, name)
 			return nil
 		})
 
 		if err != nil {
-			fmt.Printf("Error updating configuration: %v\n", err)
+			fmt.Printf("Error updating skills_register.json: %v\n", err)
 			return
 		}
 		fmt.Printf("Skill '%s' unregistered successfully.\n", name)
@@ -129,21 +115,28 @@ func runSkills(args []string) {
 			fmt.Printf("  - %s (built-in)\n", s)
 		}
 
+		// Load from skills_register.json
+		reg, err := config.LoadSkillsRegister(configDir)
+		if err != nil {
+			fmt.Printf("Error loading skills_register.json: %v\n", err)
+			return
+		}
+
 		fmt.Println("\nRegistered Skills:")
-		if len(cfg.Skills.Registered) == 0 {
+		if len(reg.Registered) == 0 {
 			fmt.Println("  (No registered skills)")
 			return
 		}
 
 		// Sort keys for consistent output
-		keys := make([]string, 0, len(cfg.Skills.Registered))
-		for k := range cfg.Skills.Registered {
+		keys := make([]string, 0, len(reg.Registered))
+		for k := range reg.Registered {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
 
 		for _, name := range keys {
-			path := cfg.Skills.Registered[name]
+			path := reg.Registered[name]
 			fmt.Printf("  - %s -> %s\n", name, path)
 		}
 
@@ -155,13 +148,17 @@ func runSkills(args []string) {
 		}
 		name := args[1]
 
+		// Load from skills_register.json
+		reg, err := config.LoadSkillsRegister(configDir)
+		if err != nil {
+			fmt.Printf("Error loading skills_register.json: %v\n", err)
+			return
+		}
+
 		// Check if it's a registered skill
-		if scriptPath, ok := cfg.Skills.Registered[name]; ok {
+		if scriptPath, ok := reg.Registered[name]; ok {
 			fmt.Printf("Skill '%s' points to script '%s'.\n", name, scriptPath)
-			// Generally, skills documentation will be under the same folder named SKILL.md
-			// Try to automatically read it
-			dir := config.ResolveConfigDir()
-			resolvedScript, _ := resolveSafePath(dir, scriptPath)
+			resolvedScript, _ := resolveSafePath(configDir, scriptPath)
 			skillDir := filepath.Dir(resolvedScript)
 			readmePath := filepath.Join(skillDir, "SKILL.md")
 			if content, err := os.ReadFile(readmePath); err == nil {
@@ -173,7 +170,6 @@ func runSkills(args []string) {
 		}
 
 		// Otherwise, it might be a built-in skill, or we should look through actual paths.
-		// For built-ins, we can point them to the docs.
 		fmt.Printf("Skill '%s' is not registered as a custom script skill. If it's built-in (e.g. cron, file_manager, websearch), refer to the core documentation or verify the name.\n", name)
 
 	case "tutorial":
@@ -189,15 +185,17 @@ func runSkills(args []string) {
 		printSkillsHelp()
 
 	default:
-		// Check if it's a registered skill being called via "yaocc skills <name>"
-		// The command is "skills", runSkills receives args starting with subcommand.
-		// So `yaocc skills my_skill arg1` -> args=["my_skill", "arg1"]
-		// output of switch cmd=args[0] is "my_skill".
-
 		name := cmd
-		if scriptPath, ok := cfg.Skills.Registered[name]; ok {
+
+		// Load from skills_register.json
+		reg, err := config.LoadSkillsRegister(configDir)
+		if err != nil {
+			fmt.Printf("Error loading skills_register.json: %v\n", err)
+			return
+		}
+
+		if scriptPath, ok := reg.Registered[name]; ok {
 			// Execute it!
-			// Resolve path again just to be safe at runtime
 			resolvedPath, err := resolveSafePath(configDir, scriptPath)
 			if err != nil {
 				fmt.Printf("Error resolving skill path: %v\n", err)

@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"log"
+	"path/filepath"
 
 	"github.com/dev-dhg/yaocc/pkg/agent"
 	"github.com/dev-dhg/yaocc/pkg/config"
@@ -65,16 +66,45 @@ func main() {
 	scheduler.Start()
 	defer scheduler.Stop()
 
-	// Start Config Watcher
+	// Start Config Watcher (for general config changes: models, messaging, etc.)
 	go config.WatchConfig(loadedPath, func(newCfg *config.Config) {
 		mu := "Server" // Just a label
 		log.Printf("[%s] Applying new configuration...", mu)
 
 		myAgent.UpdateConfig(newCfg)
-		scheduler.Reload(newCfg)
+		// Note: We no longer reload the scheduler here since cron jobs
+		// are managed independently via cron.json watcher below.
 
 		// If we had a mechanism to update Telegram client, we would do it here too.
 		// For now, most telegram changes require restart, but we can update allowed users if we refactor Client.
+	})
+
+	// Start independent cron.json watcher
+	cronPath := filepath.Join(configDir, "cron.json")
+	go config.WatchFile(cronPath, func() {
+		log.Println("[CronWatcher] cron.json changed, reloading scheduler...")
+		jobs, err := config.LoadCronJobs(configDir)
+		if err != nil {
+			log.Printf("[CronWatcher] Error loading cron.json: %v", err)
+			return
+		}
+		// Update in-memory config and reload scheduler
+		cfg.Cron = jobs
+		scheduler.Reload(cfg)
+	})
+
+	// Start independent skills_register.json watcher
+	skillsRegPath := filepath.Join(configDir, "skills_register.json")
+	go config.WatchFile(skillsRegPath, func() {
+		log.Println("[SkillsWatcher] skills_register.json changed, updating agent skills registry...")
+		reg, err := config.LoadSkillsRegister(configDir)
+		if err != nil {
+			log.Printf("[SkillsWatcher] Error loading skills_register.json: %v", err)
+			return
+		}
+		// Update in-memory config with new registration
+		cfg.Skills.Registered = reg.Registered
+		log.Printf("[SkillsWatcher] Skills registry updated: %d registered skills", len(reg.Registered))
 	})
 
 	// Start Server

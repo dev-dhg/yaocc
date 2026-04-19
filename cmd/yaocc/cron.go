@@ -36,26 +36,27 @@ func runCron(args []string) {
 
 func runCronList(args []string) {
 	listCmd := flag.NewFlagSet("list", flag.ExitOnError)
-	configPath := listCmd.String("config", "config.json", "Path to config file")
+	listCmd.String("config", "config.json", "Path to config file (unused, kept for compat)")
 
 	if err := listCmd.Parse(args); err != nil {
 		fmt.Println("Error parsing flags:", err)
 		return
 	}
 
-	cfg, _, _, err := config.LoadConfig(*configPath)
+	configDir := config.ResolveConfigDir()
+	jobs, err := config.LoadCronJobs(configDir)
 	if err != nil {
-		fmt.Printf("Error loading config: %v\n", err)
+		fmt.Printf("Error loading cron.json: %v\n", err)
 		return
 	}
 
-	if len(cfg.Cron) == 0 {
+	if len(jobs) == 0 {
 		fmt.Println("No cron jobs configured.")
 		return
 	}
 
 	fmt.Println("Configured Jobs:")
-	for i, job := range cfg.Cron {
+	for i, job := range jobs {
 		desc := job.Prompt
 		if job.Type == "script" {
 			desc = fmt.Sprintf("Script: %s", job.Script)
@@ -72,7 +73,7 @@ func runCronList(args []string) {
 
 func runCronAdd(args []string) {
 	addCmd := flag.NewFlagSet("add", flag.ExitOnError)
-	configPath := addCmd.String("config", "config.json", "Path to config file")
+	addCmd.String("config", "config.json", "Path to config file (unused, kept for compat)")
 	name := addCmd.String("name", "", "Name of the cron job")
 	schedule := addCmd.String("schedule", "", "Cron schedule (e.g. \"0 9 * * *\")")
 	prompt := addCmd.String("prompt", "", "Prompt for the agent (type=prompt)")
@@ -88,7 +89,7 @@ func runCronAdd(args []string) {
 	}
 
 	if *name == "" || *schedule == "" {
-		fmt.Println("Usage: yaocc cron add --name <name> --schedule <schedule> [--prompt <prompt> | --script <script>] [--use-history] [--target-provider <provider> --target-id <id>] [--config <path>]")
+		fmt.Println("Usage: yaocc cron add --name <name> --schedule <schedule> [--prompt <prompt> | --script <script>] [--use-history] [--target-provider <provider> --target-id <id>]")
 		return
 	}
 
@@ -124,28 +125,19 @@ func runCronAdd(args []string) {
 		Targets:    targets,
 	}
 
-	// Acquire Lock
-	if err := config.AcquireConfigLock(); err != nil {
-		fmt.Printf("Warning: Failed to acquire config lock: %v. Proceeding anyway.\n", err)
-	} else {
-		defer config.ReleaseConfigLock()
-	}
-
-	// Update Config
-	err := config.UpdateConfigRawWithPath(*configPath, func(cfg *config.Config) error {
+	// Update cron.json directly (no config lock needed)
+	err := config.UpdateCronRaw(func(jobs []config.CronJob) ([]config.CronJob, error) {
 		// Check duplicates
-		for _, job := range cfg.Cron {
+		for _, job := range jobs {
 			if strings.EqualFold(job.Name, *name) {
-				return fmt.Errorf("job with name '%s' already exists", *name)
+				return jobs, fmt.Errorf("job with name '%s' already exists", *name)
 			}
 		}
-
-		cfg.Cron = append(cfg.Cron, newJob)
-		return nil
+		return append(jobs, newJob), nil
 	})
 
 	if err != nil {
-		fmt.Printf("Error updating configuration: %v\n", err)
+		fmt.Printf("Error updating cron.json: %v\n", err)
 		return
 	}
 
@@ -154,7 +146,7 @@ func runCronAdd(args []string) {
 
 func runCronRemove(args []string) {
 	removeCmd := flag.NewFlagSet("remove", flag.ExitOnError)
-	configPath := removeCmd.String("config", "config.json", "Path to config file")
+	removeCmd.String("config", "config.json", "Path to config file (unused, kept for compat)")
 
 	if err := removeCmd.Parse(args); err != nil {
 		fmt.Println("Error parsing arguments:", err)
@@ -162,22 +154,16 @@ func runCronRemove(args []string) {
 	}
 
 	if removeCmd.NArg() < 1 {
-		fmt.Println("Usage: yaocc cron remove <name> [--config <path>]")
+		fmt.Println("Usage: yaocc cron remove <name>")
 		return
 	}
 	name := removeCmd.Arg(0)
 
-	// Acquire Lock
-	if err := config.AcquireConfigLock(); err != nil {
-		fmt.Printf("Warning: Failed to acquire config lock: %v. Proceeding anyway.\n", err)
-	} else {
-		defer config.ReleaseConfigLock()
-	}
-
-	err := config.UpdateConfigRawWithPath(*configPath, func(cfg *config.Config) error {
+	// Update cron.json directly (no config lock needed)
+	err := config.UpdateCronRaw(func(jobs []config.CronJob) ([]config.CronJob, error) {
 		newCron := []config.CronJob{}
 		found := false
-		for _, job := range cfg.Cron {
+		for _, job := range jobs {
 			if strings.EqualFold(job.Name, name) {
 				found = true
 				continue
@@ -186,15 +172,14 @@ func runCronRemove(args []string) {
 		}
 
 		if !found {
-			return fmt.Errorf("job '%s' not found", name)
+			return jobs, fmt.Errorf("job '%s' not found", name)
 		}
 
-		cfg.Cron = newCron
-		return nil
+		return newCron, nil
 	})
 
 	if err != nil {
-		fmt.Printf("Error updating configuration: %v\n", err)
+		fmt.Printf("Error updating cron.json: %v\n", err)
 		return
 	}
 

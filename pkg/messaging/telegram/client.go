@@ -280,9 +280,38 @@ func (c *Client) SendDocument(targetID string, url string, caption string) error
 func (c *Client) SystemPromptInstruction() string {
 	return `
 ## Telegram Context
-You are talking to a user via Telegram. Please use Markdown formatting (bold, italic, lists) to make your messages easy to read.
-Avoid using characters that conflict with Markdown syntax (like unescaped underscores in variable names) unless you are inside a code block.
+You are talking to a user via Telegram. 
+IMPORTANT: You MUST use HTML formatting exclusively. DO NOT use Markdown syntax (like # headers or [text](url)).
+
+### Supported HTML Tags:
+- <b>bold</b>, <strong>bold</strong>
+- <i>italic</i>, <em>italic</em>
+- <u>underline</u>, <ins>underline</ins>
+- <s>strikethrough</s>, <strike>strikethrough</strike>, <del>strikethrough</del>
+- <tg-spoiler>spoiler</tg-spoiler>, <span class="tg-spoiler">spoiler</span>
+- <a href="http://www.example.com/">inline URL</a>
+- <a href="tg://user?id=123456789">inline mention of a user</a>
+- <tg-emoji emoji-id="5368324170671202286">👍</tg-emoji> (requires a valid emoji-id)
+- <tg-time unix="1647531900" format="wDT">22:45 tomorrow</tg-time> (formats: r, w, d, D, t, T)
+- <code>inline fixed-width code</code>
+- <pre>pre-formatted fixed-width code block</pre>
+- <pre><code class="language-python">code block with language</code></pre>
+- <blockquote>Block quotation</blockquote>
+- <blockquote expandable>Expandable block quotation</blockquote>
+
+### Rules for Rich Formatting:
+1. **Nesting**: You can nest tags (e.g., <b>bold <i>italic</i></b>).
+2. **Headlines**: Use <b>BOLD TEXT</b> for headlines and section titles. Do NOT use '#' headers.
+3. **Tables**: Telegram does NOT support tables. Represent tables using ASCII formatting (using | and -) wrapped inside a <pre> or <blockquote> block to ensure fixed-width alignment.
+4. **Escaping**: You MUST escape all <, >, and & characters that are NOT part of a tag. Use &lt;, &gt;, and &amp; respectively.
+5. **Horizontal Rules**: Use ——— (long dashes) or * * * to separate sections.
+6. **Lists**: Use standard bullet points (• or -).
 `
+}
+
+func (c *Client) escapeHTML(text string) string {
+	replacer := strings.NewReplacer("<", "&lt;", ">", "&gt;", "&", "&amp;")
+	return replacer.Replace(text)
 }
 
 // Internal/Specific Methods (formerly public, now renamed or kept as helpers)
@@ -310,17 +339,18 @@ func (c *Client) sendMessageInt64(chatID int64, text string) error {
 			body := map[string]interface{}{
 				"chat_id":    chatID,
 				"text":       chunk,
-				"parse_mode": "Markdown",
+				"parse_mode": "HTML",
 			}
 
 			err := c.postJSON(url, body)
 			if err != nil {
-				// Check if error is related to markdown parsing
-				// Telegram error for bad markdown usually contains "can't parse entities"
-				if strings.Contains(err.Error(), "can't parse entities") {
-					log.Printf("Markdown parsing failed (%v) for chunk %d/%d, retrying as plain text...", err, i+1, len(chunks))
+				// Check if error is related to HTML tag parsing
+				// Telegram error for bad HTML usually contains "can't parse entities" or "Bad Request: can't parse HTML"
+				if strings.Contains(err.Error(), "can't parse entities") || strings.Contains(err.Error(), "can't parse HTML") {
+					log.Printf("HTML parsing failed (%v) for chunk %d/%d, retrying as escaped plain text...", err, i+1, len(chunks))
 
-					// Retry without parse_mode
+					// Retry with escaped text and NO parse_mode
+					body["text"] = c.escapeHTML(chunk)
 					delete(body, "parse_mode")
 					if retryErr := c.postJSON(url, body); retryErr != nil {
 						log.Printf("Error sending text chunk %d: %v", i+1, retryErr)
@@ -499,6 +529,7 @@ func (c *Client) sendMedia(chatID int64, method, field, media, caption string) e
 	}
 	if caption != "" {
 		body["caption"] = caption
+		body["parse_mode"] = "HTML"
 	}
 	return c.postJSON(url, body)
 }
@@ -525,6 +556,7 @@ func (c *Client) uploadFile(chatID int64, method, field, path, caption string) e
 	writer.WriteField("chat_id", fmt.Sprintf("%d", chatID))
 	if caption != "" {
 		writer.WriteField("caption", caption)
+		writer.WriteField("parse_mode", "HTML")
 	}
 
 	err = writer.Close()

@@ -17,3 +17,5 @@
 /temp/
 
 .env
+
+/.agents/

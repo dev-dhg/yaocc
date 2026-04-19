@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -136,8 +137,13 @@ type ServerConfig struct {
 }
 
 type SkillsConfig struct {
-	Registered          map[string]string         `json:"registered,omitempty"`          // map[name]path
+	Registered          map[string]string         `json:"registered,omitempty"`          // map[name]path — DEPRECATED: migrated to skills_register.json
 	InjectFullSkillText InjectFullSkillTextConfig `json:"injectFullSkillText,omitempty"` // bool or []string
+}
+
+// SkillsRegister holds the registered skills mapping, stored in skills_register.json.
+type SkillsRegister struct {
+	Registered map[string]string `json:"registered"` // map[name]path
 }
 
 // InjectFullSkillTextConfig allows injectFullSkillText to be either a boolean or an array of strings
@@ -295,6 +301,9 @@ func LoadConfig(path string) (*Config, string, string, error) {
 		// This respects the user's wish to anchor paths to YAOCC_CONFIG_DIR.
 	}
 
+	// Run migration if needed
+	MigrateConfig(&cfg, finalConfigDir, configPath)
+
 	return &cfg, finalConfigDir, configPath, nil
 }
 
@@ -309,6 +318,137 @@ func SaveConfig(cfg *Config, path string) error {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 	return nil
+}
+
+// --- Separate File Loading ---
+
+// LoadCronJobs loads cron jobs from cron.json in the given config directory.
+func LoadCronJobs(configDir string) ([]CronJob, error) {
+	cronPath := filepath.Join(configDir, "cron.json")
+	data, err := os.ReadFile(cronPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil // No cron.json yet, return empty
+		}
+		return nil, fmt.Errorf("failed to read cron.json: %w", err)
+	}
+
+	var jobs []CronJob
+	if err := json.Unmarshal(data, &jobs); err != nil {
+		return nil, fmt.Errorf("failed to parse cron.json: %w", err)
+	}
+	return jobs, nil
+}
+
+// SaveCronJobs writes cron jobs to cron.json in the given config directory.
+func SaveCronJobs(configDir string, jobs []CronJob) error {
+	cronPath := filepath.Join(configDir, "cron.json")
+	data, err := json.MarshalIndent(jobs, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal cron jobs: %w", err)
+	}
+	if err := os.WriteFile(cronPath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write cron.json: %w", err)
+	}
+	return nil
+}
+
+// LoadSkillsRegister loads registered skills from skills_register.json in the given config directory.
+func LoadSkillsRegister(configDir string) (*SkillsRegister, error) {
+	regPath := filepath.Join(configDir, "skills_register.json")
+	data, err := os.ReadFile(regPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &SkillsRegister{Registered: make(map[string]string)}, nil
+		}
+		return nil, fmt.Errorf("failed to read skills_register.json: %w", err)
+	}
+
+	var reg SkillsRegister
+	if err := json.Unmarshal(data, &reg); err != nil {
+		return nil, fmt.Errorf("failed to parse skills_register.json: %w", err)
+	}
+	if reg.Registered == nil {
+		reg.Registered = make(map[string]string)
+	}
+	return &reg, nil
+}
+
+// SaveSkillsRegister writes registered skills to skills_register.json in the given config directory.
+func SaveSkillsRegister(configDir string, reg *SkillsRegister) error {
+	regPath := filepath.Join(configDir, "skills_register.json")
+	data, err := json.MarshalIndent(reg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal skills register: %w", err)
+	}
+	if err := os.WriteFile(regPath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write skills_register.json: %w", err)
+	}
+	return nil
+}
+
+// --- Migration ---
+
+// MigrateConfig checks if cron jobs or skills registration exist in config.json
+// and migrates them to their own files (cron.json, skills_register.json).
+// After migration, the fields are cleared from config.json to avoid confusion.
+func MigrateConfig(cfg *Config, configDir, configPath string) {
+	migrated := false
+
+	// Migrate cron jobs
+	cronPath := filepath.Join(configDir, "cron.json")
+	if _, err := os.Stat(cronPath); os.IsNotExist(err) {
+		if len(cfg.Cron) > 0 {
+			log.Printf("[Migration] Migrating %d cron jobs from config.json to cron.json", len(cfg.Cron))
+			if err := SaveCronJobs(configDir, cfg.Cron); err != nil {
+				log.Printf("[Migration] Error saving cron.json: %v", err)
+			} else {
+				migrated = true
+			}
+		}
+	}
+
+	// Migrate skills registration
+	regPath := filepath.Join(configDir, "skills_register.json")
+	if _, err := os.Stat(regPath); os.IsNotExist(err) {
+		if len(cfg.Skills.Registered) > 0 {
+			log.Printf("[Migration] Migrating %d registered skills from config.json to skills_register.json", len(cfg.Skills.Registered))
+			reg := &SkillsRegister{Registered: cfg.Skills.Registered}
+			if err := SaveSkillsRegister(configDir, reg); err != nil {
+				log.Printf("[Migration] Error saving skills_register.json: %v", err)
+			} else {
+				migrated = true
+			}
+		}
+	}
+
+	// Clean up config.json if we migrated anything
+	if migrated {
+		log.Println("[Migration] Cleaning up migrated fields from config.json...")
+		_ = UpdateConfigRawWithPath(configPath, func(rawCfg *Config) error {
+			rawCfg.Cron = nil
+			rawCfg.Skills.Registered = nil
+			return nil
+		})
+		// Also clear from in-memory config
+		cfg.Cron = nil
+		cfg.Skills.Registered = nil
+	}
+
+	// Load from separate files into the in-memory config
+	jobs, err := LoadCronJobs(configDir)
+	if err != nil {
+		log.Printf("Warning: failed to load cron.json: %v", err)
+	} else {
+		cfg.Cron = jobs
+	}
+
+	reg, err := LoadSkillsRegister(configDir)
+	if err != nil {
+		log.Printf("Warning: failed to load skills_register.json: %v", err)
+	} else {
+		cfg.Skills.Registered = reg.Registered
+	}
 }
 
 // IsCmdEnabled checks if a command is enabled.

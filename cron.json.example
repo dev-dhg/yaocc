@@ -1,0 +1,20 @@
+[
+  {
+    "name": "daily-greeting",
+    "schedule": "0 9 * * *",
+    "type": "prompt",
+    "prompt": "Say good morning to the user in a friendly way.",
+    "targets": [
+      { "provider": "telegram", "id": "YOUR_CHAT_ID" }
+    ]
+  },
+  {
+    "name": "check-disk",
+    "schedule": "@hourly",
+    "type": "script",
+    "script": "scripts/check_disk.ps1",
+    "targets": [
+      { "provider": "telegram", "id": "YOUR_CHAT_ID" }
+    ]
+  }
+]
