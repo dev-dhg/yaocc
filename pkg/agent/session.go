@@ -10,6 +10,17 @@ import (
 	"github.com/dev-dhg/yaocc/pkg/llm"
 )
 
+// SessionStore is the interface for chat history backends
+type SessionStore interface {
+	LoadHistory(sessionID string, limit int) ([]llm.Message, error)
+	Append(sessionID, role, content string) error
+	LoadSummary(sessionID string) (string, error)
+	SaveSummary(sessionID, content string) error
+	AcquireLock(sessionID string) (func(), error)
+	WaitForLock(sessionID string, timeout time.Duration) error
+	Close() error
+}
+
 type SessionManager struct {
 	BaseDir string
 }
@@ -43,7 +54,11 @@ func (sm *SessionManager) GetLockFile(sessionID string) string {
 	return filepath.Join(sm.BaseDir, safeID+".lock")
 }
 
-func (sm *SessionManager) LoadHistory(sessionID string) ([]llm.Message, error) {
+func (sm *SessionManager) Close() error {
+	return nil // No-op for file-based manager
+}
+
+func (sm *SessionManager) LoadHistory(sessionID string, limit int) ([]llm.Message, error) {
 	path := sm.GetSessionFile(sessionID)
 	content, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
@@ -53,7 +68,13 @@ func (sm *SessionManager) LoadHistory(sessionID string) ([]llm.Message, error) {
 		return nil, err
 	}
 
-	return parseMarkdownHistory(string(content)), nil
+	messages := parseMarkdownHistory(string(content))
+	
+	if limit > 0 && len(messages) > limit {
+		return messages[len(messages)-limit:], nil
+	}
+	
+	return messages, nil
 }
 
 func (sm *SessionManager) LoadSummary(sessionID string) (string, error) {

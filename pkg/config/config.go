@@ -37,6 +37,8 @@ type MCPServerConfig struct {
 }
 
 type SessionConfig struct {
+	HistoryMode     string `json:"historyMode,omitempty"`     // "md" or "db" (default: "md")
+	HistoryLimit    int    `json:"historyLimit,omitempty"`    // Messages to inject into prompt. 0=use default(20), -1=all (default: 20)
 	Summarize       bool   `json:"summarize"`
 	SummaryModel    string `json:"summaryModel,omitempty"`    // Optional: model ID to use for summarization
 	SummaryStrategy string `json:"summaryStrategy,omitempty"` // "full" or "rolling" (default: "rolling")
@@ -269,6 +271,14 @@ func LoadConfig(path string) (*Config, string, string, error) {
 	// Set defaults if necessary
 	if cfg.Server.Port == 0 {
 		cfg.Server.Port = 8080
+	}
+
+	// Session defaults
+	if cfg.Session.HistoryMode == "" {
+		cfg.Session.HistoryMode = "md" // Backward compatible default
+	}
+	if cfg.Session.HistoryLimit == 0 {
+		cfg.Session.HistoryLimit = 20
 	}
 
 	// Resolve paths for Storage, etc.

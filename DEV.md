@@ -177,7 +177,11 @@ YAOCC supports multiple web search providers.
 
 ## Command Execution & Security
 
-The `exec` command allows executing shell commands on the host. This is gated by the `pkg/exec` package.
+### Terminal
+you are using windows 11 and windows powershell as terminal, any command you run you be compatible with windows powershell
+
+### CGO and SQLite
+YAOCC uses `modernc.org/sqlite` instead of `github.com/mattn/go-sqlite3`. This means the chat database runs on pure Go without requiring CGO or a C compiler, making it easily cross-compilable to ARM/Windows/Mac from a single environment. gated by the `pkg/exec` package.
 
 ### Security Architecture
 

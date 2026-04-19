@@ -19,11 +19,14 @@ func main() {
 		fmt.Println("  skills  Manage and run skills")
 		fmt.Println("  prompt  Ask a quick question to the LLM")
 		fmt.Println("  exec    Execute shell commands (requires config enable)")
+		fmt.Println("  migrate-sessions Migrate existing .md sessions to SQLite DB")
 		os.Exit(1)
 	}
 
 	cmd := os.Args[1]
 	switch cmd {
+	case "migrate-sessions":
+		runMigrateSessions(os.Args[2:])
 	case "init":
 		runInit()
 	case "chat":

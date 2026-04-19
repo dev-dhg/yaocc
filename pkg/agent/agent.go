@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dev-dhg/yaocc/pkg/chatdb"
 	"github.com/dev-dhg/yaocc/pkg/config"
 	"github.com/dev-dhg/yaocc/pkg/llm"
 	"github.com/dev-dhg/yaocc/pkg/mcp"
@@ -28,7 +29,7 @@ type Agent struct {
 	User       string
 	Rules      string
 	Memory     string
-	Sessions   *SessionManager
+	Sessions   SessionStore
 	Verbose    bool
 	LogFile    string
 	configDir  string
@@ -124,7 +125,21 @@ func NewAgent(cfg *config.Config, configDir string, verbose bool, logFile string
 	// Initialize Agent
 	// Use configDir for sessions
 	sessionsDir := filepath.Join(configDir, "sessions")
-	sessions := NewSessionManager(sessionsDir)
+	
+	var sessions SessionStore
+	if cfg.Session.HistoryMode == "db" {
+		dbStore, err := NewDBSessionStore(sessionsDir)
+		if err != nil {
+			log.Printf("Failed to init SQLite session store, falling back to basic md: %v", err)
+			sessions = NewSessionManager(sessionsDir)
+		} else {
+			sessions = dbStore
+			log.Printf("Using SQLite DB mode for sessions (limit: %d)", cfg.Session.HistoryLimit)
+		}
+	} else {
+		sessions = NewSessionManager(sessionsDir)
+		log.Printf("Using standard MD mode for sessions (limit: %d)", cfg.Session.HistoryLimit)
+	}
 
 	agent := &Agent{
 		Config:     cfg,
@@ -300,7 +315,11 @@ func (a *Agent) UpdateConfig(newCfg *config.Config) {
 
 func (a *Agent) Run(sessionID string, provider messaging.Provider, chatID, input string) (string, error) {
 	// 1. Load History
-	history, err := a.Sessions.LoadHistory(sessionID)
+	limit := a.Config.Session.HistoryLimit
+	if limit == 0 {
+		limit = -1 // fallback safety, though config loading should set to 20
+	}
+	history, err := a.Sessions.LoadHistory(sessionID, limit)
 	if err != nil {
 		log.Printf("Error loading history for session %s: %v", sessionID, err)
 		// continue with empty history
@@ -421,6 +440,52 @@ func (a *Agent) Run(sessionID string, provider messaging.Provider, chatID, input
 						if tc.Function.Name == "yaocc_exec" {
 							if cmd, ok := rawArgs["command"].(string); ok {
 								toolResult, _ = executeCommand(cmd)
+							}
+						} else if tc.Function.Name == "yaocc_chat_history_search" || tc.Function.Name == "yaocc_chat_history_recent" {
+							// Internal DB Tool Handling
+							if dbStore, ok := a.Sessions.(*DBSessionStore); ok {
+								limit := 10
+								if l, ok := rawArgs["limit"].(float64); ok { limit = int(l) }
+								
+								if tc.Function.Name == "yaocc_chat_history_recent" {
+									msgs, err := dbStore.DB().LoadHistory(chatID, limit)
+									if err != nil {
+										toolResult = fmt.Sprintf("Error retrieving history: %v", err)
+									} else {
+										toolResult = chatdb.FormatMessages(msgs)
+									}
+								} else {
+									query, _ := rawArgs["query"].(string)
+									fromStr, _ := rawArgs["from"].(string)
+									toStr, _ := rawArgs["to"].(string)
+
+									if fromStr != "" && toStr != "" {
+										from, err1 := time.Parse("2006-01-02", fromStr)
+										to, err2 := time.Parse("2006-01-02", toStr)
+										if err1 == nil && err2 == nil {
+											// Make 'to' end of day
+											to = to.Add(24 * time.Hour).Add(-time.Nanosecond)
+											if query != "" {
+												msgs, err := dbStore.DB().SearchByDateAndQuery(chatID, query, from, to, limit)
+												if err == nil { toolResult = chatdb.FormatMessages(msgs) } else { toolResult = err.Error() }
+											} else {
+												msgs, err := dbStore.DB().SearchByDate(chatID, from, to, limit)
+												if err == nil { toolResult = chatdb.FormatMessages(msgs) } else { toolResult = err.Error() }
+											}
+										} else {
+											toolResult = "Error parsing dates. Please use YYYY-MM-DD format."
+										}
+									} else if query != "" {
+										msgs, err := dbStore.DB().Search(chatID, query, limit)
+										if err != nil { toolResult = err.Error() } else { toolResult = chatdb.FormatMessages(msgs) }
+									} else {
+										// Fallback to recent if search called with no parameters
+										msgs, err := dbStore.DB().LoadHistory(chatID, limit)
+										if err != nil { toolResult = err.Error() } else { toolResult = chatdb.FormatMessages(msgs) }
+									}
+								}
+							} else {
+								toolResult = "Error: chat_history tool is only available when historyMode is set to 'db'"
 							}
 						} else if tc.Function.Name == "yaocc_skills_run" {
 							name, _ := rawArgs["name"].(string)
@@ -921,6 +986,13 @@ func (a *Agent) GetTools() []llm.Tool {
 		})
 	}
 
+	// Internal Chat History Tool for DB mode
+	if a.Config.Session.HistoryMode == "db" {
+		if schemas := GetBuiltinToolSchemas("chat-history", "Interact with the current chat session history"); schemas != nil {
+			tools = append(tools, schemas...)
+		}
+	}
+
 	// 3. Aggregate Tools from MCP Servers
 	if a.IsNativeToolCallingEnabled() && len(a.MCPServers) > 0 {
 		for srvName, client := range a.MCPServers {
@@ -963,8 +1035,40 @@ func (a *Agent) UpdateSessionSummary(sessionID string) {
 	}
 	defer unlock()
 
-	// 3. Load Session Data
-	history, err := a.Sessions.LoadHistory(sessionID)
+	// 3. Load Session Data & Checkpoint
+	var history []llm.Message
+	var lastID int64
+	
+	// Determine Strategy
+	strategy := a.Config.Session.SummaryStrategy
+	if strategy == "" {
+		strategy = "rolling" // Default
+	}
+
+	var currentSummary string
+	if strategy == "rolling" {
+		currentSummary, _ = a.Sessions.LoadSummary(sessionID)
+	}
+
+	if strategy == "rolling" && a.Config.Session.HistoryMode == "db" {
+		if dbStore, ok := a.Sessions.(*DBSessionStore); ok {
+			history, lastID, err = dbStore.GetUnsummarizedMessages(sessionID)
+			if err != nil {
+				log.Printf("Failed to load unsummarized history: %v", err)
+				return
+			}
+			if len(history) == 0 {
+				return // Nothing new to summarize
+			}
+		} else {
+			history, err = a.Sessions.LoadHistory(sessionID, -1)
+			if err != nil { return }
+		}
+	} else {
+		history, err = a.Sessions.LoadHistory(sessionID, -1)
+		if err != nil { return } // Should we still log? (Handled below)
+	}
+
 	if err != nil {
 		log.Printf("Failed to load history for summary: %v", err)
 		return
@@ -974,50 +1078,10 @@ func (a *Agent) UpdateSessionSummary(sessionID string) {
 		return
 	}
 
-	// 4. Determine Strategy
-	strategy := a.Config.Session.SummaryStrategy
-	if strategy == "" {
-		strategy = "rolling" // Default
-	}
-
-	var currentSummary string
-
-	if strategy == "rolling" {
-		currentSummary, _ = a.Sessions.LoadSummary(sessionID)
-	}
-
 	// 5. Construct Prompt
 	var prompt string
 	if strategy == "rolling" && currentSummary != "" {
-		// Optimization: We should ideally only take the *new* messages.
-		// But LoadHistory gives us everything.
-		// Simplification: We provide the current summary and the *full* history (or last N messages)
-		// and ask to update.
-		// If history is huge, passing it all back is expensive.
-		// But "rolling" implies we append.
-		// To truly do rolling, we need to know where we left off.
-		// The simple "rolling" here will be: "Here is the summary of the conversation so far, and here are the recent messages. Update the summary."
-		// We need to identify "recent".
-		// Since we don't track offset, we might have to pass full history for V1, or just last X messages?
-		// If we pass full history + existing summary, it's almost as expensive as "full".
-		// TRUE ROLLING requires state (offset).
-		// Given we don't have offset storage easily, let's implement "Full" logic but calling it "rolling" is misleading if we re-read everything.
-		// Modification: Let's assume "rolling" means "Update the summary based on the provided text".
-		// If we want to be efficient, we can't easily identify "new" without state.
-		// Let's stick to "Full" effectively for now but structured as "Current Summary + Full History -> New Summary".
-		// Actually, let's just implement "Full" semantics for now to ensure correctness, as "rolling" without offset is risky (might duplicate or miss).
-		// Wait, user explicitly asked for efficient "rolling".
-		// "doing a summary everytime it get a new message can be very time consuming, so instead maybe we could do it after a message was replied"
-		// "deferred"
-		// If I can't determine "new", I must process all.
-		// Let's implement "Full" summarization for V1 to be safe, but call it "Update Summary".
-		// Maybe for "rolling", we just take the last 10 messages and say "incorporate these into the summary"?
-		// But we don't know if the previous 10 were already summarized.
-		// Let's maintain a simple implementation: Always summarize full history for now, but async.
-		// The user's main concern was "time consuming", which async solves.
-		// The "rolling" strategy in config allows future optimization (e.g. adding offset tracking).
-
-		prompt = fmt.Sprintf("Here is the current summary of the session:\n%s\n\nHere is the full conversation history:\n%v\n\nPlease update the summary to reflect the full conversation. Keep it concise but comprehensive.", currentSummary, history)
+		prompt = fmt.Sprintf("Here is the current summary of the session:\n%s\n\nHere are the NEW messages in the conversation since that summary:\n%v\n\nPlease update the summary to reflect these new messages. Keep the final result concise but comprehensive.", currentSummary, history)
 	} else {
 		// Full
 		prompt = fmt.Sprintf("Please provide a concise but comprehensive summary of the following conversation:\n%v", history)
@@ -1036,6 +1100,15 @@ func (a *Agent) UpdateSessionSummary(sessionID string) {
 	}
 
 	// 7. Save Summary
+	if a.Config.Session.HistoryMode == "db" && strategy == "rolling" {
+		if dbStore, ok := a.Sessions.(*DBSessionStore); ok {
+			if err := dbStore.SaveSummaryCheckpoint(sessionID, lastID, newSummary); err != nil {
+				log.Printf("Failed to save summary checkpoint: %v", err)
+			}
+			return
+		}
+	}
+	
 	if err := a.Sessions.SaveSummary(sessionID, newSummary); err != nil {
 		log.Printf("Failed to save summary: %v", err)
 	}

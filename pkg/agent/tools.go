@@ -108,6 +108,17 @@ func GetBuiltinToolSchemas(skillName, description string) []llm.Tool {
 			"query": prop("string", "The search query to search the web for."),
 		}, []string{"query"})
 
+	case "chat-history", "chat_history":
+		addTool("search", "Search the current chat session history using full-text search", map[string]interface{}{
+			"query": prop("string", "Search term to find in messages (optional - omit to get recent messages)"),
+			"limit": prop("integer", "Maximum number of results to return (default: 10)"),
+			"from":  prop("string", "Start date filter in YYYY-MM-DD format (optional)"),
+			"to":    prop("string", "End date filter in YYYY-MM-DD format (optional)"),
+		}, nil)
+		addTool("recent", "Get the most recent messages from the current chat session", map[string]interface{}{
+			"limit": prop("integer", "Number of recent messages to retrieve (default: 5)"),
+		}, nil)
+
 	case "prompt":
 		addTool("", "", map[string]interface{}{
 			"message": prop("string", "The prompt or message to immediately pass to the LLM statelessly."),
