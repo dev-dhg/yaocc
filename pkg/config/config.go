@@ -82,21 +82,24 @@ type ModelConfig struct {
 	ID            string      `json:"id"`    // Internal ID
 	Model         string      `json:"model"` // API Model Name
 	Name          string      `json:"name"`  // Display Name
-	Reasoning     interface{} `json:"reasoning,omitempty"`
-	Input         []string    `json:"input,omitempty"`
-	Cost          CostConfig  `json:"cost,omitempty"`
-	ContextWindow int         `json:"contextWindow,omitempty"`
-	MaxTokens     int         `json:"maxTokens,omitempty"`
-	MaxTurns      int         `json:"maxTurns,omitempty"`  // Override global max turns
-	TimeoutMs     int         `json:"timeoutMs,omitempty"` // Model-specific timeout
-	Tool          *bool       `json:"tool,omitempty"`      // Set to false to disable native tools for this model
+	Reasoning     interface{}     `json:"reasoning,omitempty"`
+	Input         []string        `json:"input,omitempty"`
+	Sampling      *SamplingConfig `json:"sampling,omitempty"`
+	ContextWindow int             `json:"contextWindow,omitempty"`
+	MaxTokens     int             `json:"maxTokens,omitempty"`
+	MaxTurns      int             `json:"maxTurns,omitempty"`  // Override global max turns
+	TimeoutMs     int             `json:"timeoutMs,omitempty"` // Model-specific timeout
+	Tool          *bool           `json:"tool,omitempty"`      // Set to false to disable native tools for this model
 }
 
-type CostConfig struct {
-	Input      float64 `json:"input"`
-	Output     float64 `json:"output"`
-	CacheRead  float64 `json:"cacheRead,omitempty"`
-	CacheWrite float64 `json:"cacheWrite,omitempty"`
+type SamplingConfig struct {
+	Temperature       *float64 `json:"temperature,omitempty"`
+	TopP              *float64 `json:"top_p,omitempty"`
+	TopK              *int     `json:"top_k,omitempty"`
+	MinP              *float64 `json:"min_p,omitempty"`
+	PresencePenalty   *float64 `json:"presence_penalty,omitempty"`
+	RepetitionPenalty *float64 `json:"repetition_penalty,omitempty"`
+	FrequencyPenalty  *float64 `json:"frequency_penalty,omitempty"`
 }
 
 type MessagingProviderConfig struct {

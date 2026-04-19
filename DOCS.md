@@ -6,6 +6,34 @@ Welcome to the detailed documentation for YAOCC (Yet Another OpenClaw Clone)! Th
 
 The `config.json` file is the heart of YAOCC. It dictates how the backend server connects to LLM providers, search engines, and messaging platforms.
 
+### Model Configuration and Sampling
+
+You can configure multiple providers and models. Each model can have custom sampling parameters:
+
+```json
+"models": [
+  {
+    "id": "llama3",
+    "model": "llama3.2",
+    "name": "Llama 3.2",
+    "sampling": {
+      "temperature": 0.7,
+      "top_p": 0.9,
+      "top_k": 40,
+      "repetition_penalty": 1.1,
+      "frequency_penalty": 0.0,
+      "presence_penalty": 0.0,
+      "min_p": 0.05
+    },
+    "contextWindow": 8192,
+    "maxTokens": 4096
+  }
+]
+```
+
+*   **`sampling`**: Optional object containing sampling parameters.
+    *   **`repetition_penalty`**: Automatically mapped to `frequency_penalty` if the latter is not set.
+
 ### Skills Configuration
 
 The agentic capabilities of YAOCC are defined in the `skills` section:

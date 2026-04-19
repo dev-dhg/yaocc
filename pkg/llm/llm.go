@@ -18,6 +18,7 @@ type Client struct {
 	Model      string
 	MaxTokens  int
 	Reasoning  interface{}
+	Sampling   *config.SamplingConfig
 	HTTPClient *http.Client
 }
 
@@ -60,6 +61,14 @@ type ChatRequest struct {
 	Reasoning interface{} `json:"reasoning,omitempty"`
 	// OpenRouter specific
 	Transforms []string `json:"transforms,omitempty"`
+	// Sampling
+	Temperature       *float64 `json:"temperature,omitempty"`
+	TopP              *float64 `json:"top_p,omitempty"`
+	TopK              *int     `json:"top_k,omitempty"`
+	MinP              *float64 `json:"min_p,omitempty"`
+	PresencePenalty   *float64 `json:"presence_penalty,omitempty"`
+	FrequencyPenalty  *float64 `json:"frequency_penalty,omitempty"`
+	RepetitionPenalty *float64 `json:"repetition_penalty,omitempty"` // For providers like vLLM/Ollama
 }
 
 type ChatResponse struct {
@@ -81,7 +90,7 @@ func NewClient(cfg config.ProviderConfig, selectedModel string) *Client {
 	maxTokens := 0
 	var reasoning interface{}
 	modelTimeout := timeout // Default to provider timeout
-
+	var sampling *config.SamplingConfig
 	for _, m := range cfg.Models {
 		// Matches either the ID or the Model name
 		if m.Model == selectedModel || m.ID == selectedModel {
@@ -90,6 +99,9 @@ func NewClient(cfg config.ProviderConfig, selectedModel string) *Client {
 			}
 			if m.Reasoning != nil {
 				reasoning = m.Reasoning
+			}
+			if m.Sampling != nil {
+				sampling = m.Sampling
 			}
 			if m.TimeoutMs > 0 {
 				modelTimeout = time.Duration(m.TimeoutMs) * time.Millisecond
@@ -104,6 +116,7 @@ func NewClient(cfg config.ProviderConfig, selectedModel string) *Client {
 		Model:     selectedModel,
 		MaxTokens: maxTokens,
 		Reasoning: reasoning,
+		Sampling:  sampling,
 		HTTPClient: &http.Client{
 			Timeout: modelTimeout,
 		},
@@ -133,6 +146,21 @@ func (c *Client) Chat(messages []Message, tools []Tool) (string, []ToolCall, err
 		default:
 			// Pass the object directly (e.g. map[string]interface{})
 			reqBody.Reasoning = v
+		}
+	}
+
+	if c.Sampling != nil {
+		reqBody.Temperature = c.Sampling.Temperature
+		reqBody.TopP = c.Sampling.TopP
+		reqBody.TopK = c.Sampling.TopK
+		reqBody.MinP = c.Sampling.MinP
+		reqBody.PresencePenalty = c.Sampling.PresencePenalty
+		reqBody.FrequencyPenalty = c.Sampling.FrequencyPenalty
+		reqBody.RepetitionPenalty = c.Sampling.RepetitionPenalty
+
+		// Map RepetitionPenalty to FrequencyPenalty if not explicitly set
+		if reqBody.FrequencyPenalty == nil && c.Sampling.RepetitionPenalty != nil {
+			reqBody.FrequencyPenalty = c.Sampling.RepetitionPenalty
 		}
 	}
 
