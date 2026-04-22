@@ -186,6 +186,27 @@ func (s *Scheduler) RunJob(job config.CronJob) {
 		// 1. Generate Response once (Stateless)
 		sysPrompt := s.Agent.GetBaseSystemPrompt()
 
+		// Inject provider instructions for formatting (e.g. Telegram HTML rules)
+		var sysProviders string
+		processedProviders := make(map[string]bool)
+		for _, target := range targets {
+			if target.Provider != "local" {
+				if provider, ok := s.Providers[target.Provider]; ok {
+					if !processedProviders[target.Provider] {
+						instr := provider.SystemPromptInstruction()
+						if instr != "" {
+							if sysProviders == "" {
+								sysProviders = "\n\n## Delivery Targets Formatting Instructions\n"
+							}
+							sysProviders += instr + "\n"
+						}
+						processedProviders[target.Provider] = true
+					}
+				}
+			}
+		}
+		sysPrompt += sysProviders
+
 		messages := []llm.Message{
 			{Role: "system", Content: sysPrompt},
 			{Role: "user", Content: finalPrompt},

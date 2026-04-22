@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -309,9 +310,43 @@ IMPORTANT: You MUST use HTML formatting exclusively. DO NOT use Markdown syntax 
 `
 }
 
-func (c *Client) escapeHTML(text string) string {
-	replacer := strings.NewReplacer("<", "&lt;", ">", "&gt;", "&", "&amp;")
-	return replacer.Replace(text)
+func (c *Client) sanitizeTelegramHTML(value string) string {
+	// Remove comments
+	reComment := regexp.MustCompile(`(?s)<!--.*?-->`)
+	value = reComment.ReplaceAllString(value, "")
+
+	allowedTags := map[string]bool{
+		"a": true, "b": true, "strong": true, "i": true, "em": true, "u": true,
+		"ins": true, "s": true, "strike": true, "del": true, "code": true,
+		"pre": true, "blockquote": true, "tg-spoiler": true, "tg-emoji": true,
+	}
+
+	newlineTags := map[string]bool{
+		"br": true, "p": true, "div": true, "li": true,
+	}
+
+	// Match HTML tags
+	reTag := regexp.MustCompile(`(?i)</?([a-z0-9-]+)\b[^>]*\/?>`)
+	value = reTag.ReplaceAllStringFunc(value, func(tag string) string {
+		match := reTag.FindStringSubmatch(tag)
+		if len(match) > 1 {
+			name := strings.ToLower(match[1])
+			if newlineTags[name] {
+				return "\n"
+			}
+			if allowedTags[name] {
+				return tag
+			}
+			return ""
+		}
+		return ""
+	})
+
+	value = strings.ReplaceAll(value, "\r\n", "\n")
+	reLines := regexp.MustCompile(`\n{3,}`)
+	value = reLines.ReplaceAllString(value, "\n\n")
+
+	return value
 }
 
 // Internal/Specific Methods (formerly public, now renamed or kept as helpers)
@@ -335,10 +370,13 @@ func (c *Client) sendMessageInt64(chatID int64, text string) error {
 				time.Sleep(200 * time.Millisecond) // Small delay between chunks
 			}
 
+			// Sanitize chunk to strip unsupported tags before sending
+			sanitizedChunk := c.sanitizeTelegramHTML(chunk)
+
 			url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", c.Token)
 			body := map[string]interface{}{
 				"chat_id":    chatID,
-				"text":       chunk,
+				"text":       sanitizedChunk,
 				"parse_mode": "HTML",
 			}
 
@@ -347,10 +385,10 @@ func (c *Client) sendMessageInt64(chatID int64, text string) error {
 				// Check if error is related to HTML tag parsing
 				// Telegram error for bad HTML usually contains "can't parse entities" or "Bad Request: can't parse HTML"
 				if strings.Contains(err.Error(), "can't parse entities") || strings.Contains(err.Error(), "can't parse HTML") {
-					log.Printf("HTML parsing failed (%v) for chunk %d/%d, retrying as escaped plain text...", err, i+1, len(chunks))
+					log.Printf("HTML parsing failed (%v) for chunk %d/%d, retrying as raw plain text...", err, i+1, len(chunks))
 
-					// Retry with escaped text and NO parse_mode
-					body["text"] = c.escapeHTML(chunk)
+					// Retry with RAW text and NO parse_mode
+					body["text"] = sanitizedChunk
 					delete(body, "parse_mode")
 					if retryErr := c.postJSON(url, body); retryErr != nil {
 						log.Printf("Error sending text chunk %d: %v", i+1, retryErr)
