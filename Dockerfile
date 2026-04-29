@@ -5,6 +5,11 @@ ARG YAOCC_DOCKER_RUN_COMMANDS=""
 # Build Stage
 FROM golang:alpine AS builder
 
+# Version info injected at build time
+ARG YAOCC_VERSION=dev
+ARG YAOCC_COMMIT=unknown
+ARG YAOCC_BUILD_DATE=unknown
+
 # Install build dependencies
 RUN apk add --no-cache git
 
@@ -19,10 +24,12 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build binaries
-# Building to /app/build to match project structure, though inside container path can be anything
-RUN go build -o /app/build/yaocc-server ./cmd/yaocc-server && \
-    go build -o /app/build/yaocc ./cmd/yaocc
+# Build binaries with version info
+RUN LDFLAGS="-X github.com/dev-dhg/yaocc/pkg/version.Version=${YAOCC_VERSION} \
+             -X github.com/dev-dhg/yaocc/pkg/version.Commit=${YAOCC_COMMIT} \
+             -X github.com/dev-dhg/yaocc/pkg/version.BuildDate=${YAOCC_BUILD_DATE}" && \
+    go build -ldflags "$LDFLAGS" -o /app/build/yaocc-server ./cmd/yaocc-server && \
+    go build -ldflags "$LDFLAGS" -o /app/build/yaocc ./cmd/yaocc
 
 # Final Stage
 FROM ${YAOCC_BASE_IMAGE}

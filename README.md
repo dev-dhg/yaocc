@@ -47,11 +47,16 @@ Build files can be found in the [Releases](../../releases) tab.
 To build manually:
 ```bash
 # Build CLI
-go build -o yaocc.exe ./cmd/yaocc
+go build -o build/yaocc.exe ./cmd/yaocc
 
 # Build Server
-go build -o yaocc-server.exe ./cmd/yaocc-server
+go build -o build/yaocc-server.exe ./cmd/yaocc-server
+
+# Check version
+./build/yaocc.exe version
 ```
+
+> To embed version info into the binary, see the [Versioning section in DEV.md](DEV.md#versioning).
 
 ## Docker
 
@@ -67,12 +72,17 @@ Or manually using `docker build` with the default arguments:
 
 ```bash
 docker build \
+  --build-arg YAOCC_VERSION="v1.0.0" \
+  --build-arg YAOCC_COMMIT="$(git rev-parse --short HEAD)" \
+  --build-arg YAOCC_BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   --build-arg YAOCC_BASE_IMAGE="node:24-alpine" \
   --build-arg YAOCC_DOCKER_APK_PACKAGES="git nano curl unzip python3" \
   --build-arg YAOCC_DOCKER_RUN_COMMANDS="" \
   --build-arg YAOCC_USER="node" \
-  -t yaocc:latest .
+  -t yaocc:v1.0.0 .
 ```
+
+> The `YAOCC_VERSION`, `YAOCC_COMMIT`, and `YAOCC_BUILD_DATE` args are optional. If omitted, the binary reports `dev` as its version.
 
 ### Using Docker Compose (Recommended)
 

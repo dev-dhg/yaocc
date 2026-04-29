@@ -3,10 +3,13 @@ package main
 import (
 	"fmt"
 	"os"
+
+	"github.com/dev-dhg/yaocc/pkg/version"
 )
 
 func main() {
 	if len(os.Args) < 2 {
+		fmt.Printf("YAOCC %s\n\n", version.String())
 		fmt.Println("Usage: yaocc <command> [args]")
 		fmt.Println("Commands:")
 		fmt.Println("  init    Initialize a new YAOCC project")
@@ -20,11 +23,14 @@ func main() {
 		fmt.Println("  prompt  Ask a quick question to the LLM")
 		fmt.Println("  exec    Execute shell commands (requires config enable)")
 		fmt.Println("  migrate-sessions Migrate existing .md sessions to SQLite DB")
+		fmt.Println("  version Print version information")
 		os.Exit(1)
 	}
 
 	cmd := os.Args[1]
 	switch cmd {
+	case "version", "--version", "-v":
+		fmt.Printf("YAOCC %s\n", version.String())
 	case "migrate-sessions":
 		runMigrateSessions(os.Args[2:])
 	case "init":

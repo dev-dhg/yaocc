@@ -2,7 +2,9 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
+	"os"
 	"path/filepath"
 
 	"github.com/dev-dhg/yaocc/pkg/agent"
@@ -11,16 +13,24 @@ import (
 	"github.com/dev-dhg/yaocc/pkg/messaging"
 	"github.com/dev-dhg/yaocc/pkg/messaging/telegram"
 	"github.com/dev-dhg/yaocc/pkg/server"
+	"github.com/dev-dhg/yaocc/pkg/version"
 )
 
 func main() {
 	configPath := flag.String("config", "config.json", "path to config file")
 	logLevel := flag.String("level", "info", "log level (info, verbose)")
 	logFile := flag.String("file", "", "path to log file for verbose output")
+	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
 
-	log.Printf("Starting YAOCC Server...")
+	if *showVersion {
+		fmt.Printf("YAOCC Server %s\n", version.String())
+		os.Exit(0)
+	}
+
+	log.Printf("Starting YAOCC Server %s...", version.Version)
 	log.Printf("Loading configuration from %s...", *configPath)
+
 
 	cfg, configDir, loadedPath, err := config.LoadConfig(*configPath)
 	if err != nil {

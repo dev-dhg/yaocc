@@ -17,6 +17,7 @@ Welcome to the YAOCC development guide! This document covers how to build, test,
     - `config/`: Configuration handling.
     - `llm/`: LLM client implementation.
     - `skills/`: Skill loading and management.
+    - `version/`: Build-time version info (injected via ldflags).
     - `messaging/`: Messaging provider implementations.
         - `telegram/`: Telegram bot client.
 - `skills/`: Default skill definitions and implementations.
@@ -27,11 +28,91 @@ To build the project, run:
 
 ```bash
 # Build CLI
-go build -o yaocc.exe ./cmd/yaocc
+go build -o build/yaocc.exe ./cmd/yaocc
 
-# Build Server (if needed)
-go build -o yaocc-server.exe ./cmd/yaocc-server
+# Build Server
+go build -o build/yaocc-server.exe ./cmd/yaocc-server
 ```
+
+## Versioning
+
+YAOCC uses Go **ldflags** to inject version information at build time. The `pkg/version` package exposes three variables:
+
+| Variable | Description | Default |
+|---|---|---|
+| `Version` | Semantic version tag (e.g. `v1.2.3`) | `dev` |
+| `Commit` | Short Git commit SHA | `unknown` |
+| `BuildDate` | ISO 8601 build timestamp | `unknown` |
+
+### Checking the Version
+
+```bash
+# CLI
+yaocc version
+# or
+yaocc --version
+
+# Server
+yaocc-server --version
+```
+
+### Building with Version Locally
+
+#### Native Build (PowerShell)
+
+```powershell
+$VERSION = "v1.0.0"
+$COMMIT = (git rev-parse --short HEAD)
+$DATE = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
+$LDFLAGS = "-X github.com/dev-dhg/yaocc/pkg/version.Version=$VERSION -X github.com/dev-dhg/yaocc/pkg/version.Commit=$COMMIT -X github.com/dev-dhg/yaocc/pkg/version.BuildDate=$DATE"
+
+go build -ldflags $LDFLAGS -o build/yaocc.exe ./cmd/yaocc
+go build -ldflags $LDFLAGS -o build/yaocc-server.exe ./cmd/yaocc-server
+```
+
+#### Native Build (Bash / Linux / macOS)
+
+```bash
+VERSION="v1.0.0"
+COMMIT=$(git rev-parse --short HEAD)
+DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+LDFLAGS="-X github.com/dev-dhg/yaocc/pkg/version.Version=${VERSION} -X github.com/dev-dhg/yaocc/pkg/version.Commit=${COMMIT} -X github.com/dev-dhg/yaocc/pkg/version.BuildDate=${DATE}"
+
+go build -ldflags "$LDFLAGS" -o build/yaocc ./cmd/yaocc
+go build -ldflags "$LDFLAGS" -o build/yaocc-server ./cmd/yaocc-server
+```
+
+#### Docker Build with Version
+
+The Dockerfile accepts `YAOCC_VERSION`, `YAOCC_COMMIT`, and `YAOCC_BUILD_DATE` as build args:
+
+```bash
+docker build \
+  --build-arg YAOCC_VERSION="v1.0.0" \
+  --build-arg YAOCC_COMMIT="$(git rev-parse --short HEAD)" \
+  --build-arg YAOCC_BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --build-arg YAOCC_BASE_IMAGE="node:24-alpine" \
+  --build-arg YAOCC_DOCKER_APK_PACKAGES="git nano curl unzip python3" \
+  --build-arg YAOCC_USER="node" \
+  -t yaocc:v1.0.0 .
+```
+
+Or with Docker Compose (PowerShell):
+
+```powershell
+$env:YAOCC_VERSION="v1.0.0"
+$env:YAOCC_COMMIT=(git rev-parse --short HEAD)
+$env:YAOCC_BUILD_DATE=(Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
+docker compose build --build-arg YAOCC_VERSION=$env:YAOCC_VERSION --build-arg YAOCC_COMMIT=$env:YAOCC_COMMIT --build-arg YAOCC_BUILD_DATE=$env:YAOCC_BUILD_DATE
+```
+
+> **Note:** If you don't pass version args, the binaries default to `dev` / `unknown`. This is fine for local development.
+
+### CI/CD (Automatic)
+
+Both GitLab CI and GitHub Actions automatically inject version info:
+- **Tagged builds** (`v*`): Version is set to the tag name (e.g. `v1.2.3`)
+- **Branch builds**: Version is set to `dev-<short-sha>`
 
 ## Configuration
 

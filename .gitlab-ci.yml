@@ -1,4 +1,4 @@
-image: golang:1.23
+image: golang:1.25
 
 stages:
   - build
@@ -6,13 +6,27 @@ stages:
 variables:
   GO111MODULE: "on"
   CGO_ENABLED: "0"
+  VERSION_PKG: "github.com/dev-dhg/yaocc/pkg/version"
+
+# Determine version: use tag name if available, otherwise commit SHA
+.version_script: &version_script
+  - |
+    if [ -n "$CI_COMMIT_TAG" ]; then
+      VERSION="$CI_COMMIT_TAG"
+    else
+      VERSION="dev-$CI_COMMIT_SHORT_SHA"
+    fi
+    BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    LDFLAGS="-X ${VERSION_PKG}.Version=${VERSION} -X ${VERSION_PKG}.Commit=${CI_COMMIT_SHORT_SHA} -X ${VERSION_PKG}.BuildDate=${BUILD_DATE}"
+    echo "Building version: $VERSION (commit: $CI_COMMIT_SHORT_SHA)"
 
 build-linux:
   stage: build
   script:
+    - *version_script
     - mkdir -p build/linux
-    - GOOS=linux GOARCH=amd64 go build -o build/linux/yaocc ./cmd/yaocc
-    - GOOS=linux GOARCH=amd64 go build -o build/linux/yaocc-server ./cmd/yaocc-server
+    - GOOS=linux GOARCH=amd64 go build -ldflags "$LDFLAGS" -o build/linux/yaocc ./cmd/yaocc
+    - GOOS=linux GOARCH=amd64 go build -ldflags "$LDFLAGS" -o build/linux/yaocc-server ./cmd/yaocc-server
   artifacts:
     name: "yaocc-linux-$CI_COMMIT_SHORT_SHA"
     paths:
@@ -22,9 +36,10 @@ build-linux:
 build-linux:arm64:
   stage: build
   script:
+    - *version_script
     - mkdir -p build/linux
-    - GOOS=linux GOARCH=arm64 go build -o build/linux/yaocc-arm64 ./cmd/yaocc
-    - GOOS=linux GOARCH=arm64 go build -o build/linux/yaocc-server-arm64 ./cmd/yaocc-server
+    - GOOS=linux GOARCH=arm64 go build -ldflags "$LDFLAGS" -o build/linux/yaocc-arm64 ./cmd/yaocc
+    - GOOS=linux GOARCH=arm64 go build -ldflags "$LDFLAGS" -o build/linux/yaocc-server-arm64 ./cmd/yaocc-server
   artifacts:
     name: "yaocc-linux-arm64-$CI_COMMIT_SHORT_SHA"
     paths:
@@ -34,9 +49,10 @@ build-linux:arm64:
 build-linux:armv7:
   stage: build
   script:
+    - *version_script
     - mkdir -p build/linux
-    - GOOS=linux GOARCH=arm GOARM=7 go build -o build/linux/yaocc-armv7 ./cmd/yaocc
-    - GOOS=linux GOARCH=arm GOARM=7 go build -o build/linux/yaocc-server-armv7 ./cmd/yaocc-server
+    - GOOS=linux GOARCH=arm GOARM=7 go build -ldflags "$LDFLAGS" -o build/linux/yaocc-armv7 ./cmd/yaocc
+    - GOOS=linux GOARCH=arm GOARM=7 go build -ldflags "$LDFLAGS" -o build/linux/yaocc-server-armv7 ./cmd/yaocc-server
   artifacts:
     name: "yaocc-linux-armv7-$CI_COMMIT_SHORT_SHA"
     paths:
@@ -46,9 +62,10 @@ build-linux:armv7:
 build-darwin:
   stage: build
   script:
+    - *version_script
     - mkdir -p build/darwin
-    - GOOS=darwin GOARCH=arm64 go build -o build/darwin/yaocc-darwin ./cmd/yaocc
-    - GOOS=darwin GOARCH=arm64 go build -o build/darwin/yaocc-server-darwin ./cmd/yaocc-server
+    - GOOS=darwin GOARCH=arm64 go build -ldflags "$LDFLAGS" -o build/darwin/yaocc-darwin ./cmd/yaocc
+    - GOOS=darwin GOARCH=arm64 go build -ldflags "$LDFLAGS" -o build/darwin/yaocc-server-darwin ./cmd/yaocc-server
   artifacts:
     name: "yaocc-darwin-$CI_COMMIT_SHORT_SHA"
     paths:
@@ -58,9 +75,10 @@ build-darwin:
 build-windows:
   stage: build
   script:
+    - *version_script
     - mkdir -p build/windows
-    - GOOS=windows GOARCH=amd64 go build -o build/windows/yaocc.exe ./cmd/yaocc
-    - GOOS=windows GOARCH=amd64 go build -o build/windows/yaocc-server.exe ./cmd/yaocc-server
+    - GOOS=windows GOARCH=amd64 go build -ldflags "$LDFLAGS" -o build/windows/yaocc.exe ./cmd/yaocc
+    - GOOS=windows GOARCH=amd64 go build -ldflags "$LDFLAGS" -o build/windows/yaocc-server.exe ./cmd/yaocc-server
   artifacts:
     name: "yaocc-windows-$CI_COMMIT_SHORT_SHA"
     paths:
