@@ -57,7 +57,7 @@ func testProvider(cfg *config.Config, providerName string) {
 		{Role: "user", Content: "Hello, are you functional? Reply with 'Yes, I am functioning'."},
 	}
 
-	response, _, err := client.Chat(messages, nil)
+	response, _, _, err := client.Chat(messages, nil)
 	if err != nil {
 		fmt.Printf("Error chatting with %s: %v\n", providerName, err)
 		return

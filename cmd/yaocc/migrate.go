@@ -109,7 +109,11 @@ func runMigrateSessions(args []string) {
 				metaStr = fmt.Sprintf(`{"name":"%s","tool_call_id":"%s"}`, msg.Name, msg.ToolCallID)
 			}
 
-			if err := db.AppendWithTimestamp(sessionID, msg.Role, msg.Content, metaStr, ts); err != nil {
+			contentStr := ""
+			if str, ok := msg.Content.(string); ok {
+				contentStr = str
+			}
+			if err := db.AppendWithTimestamp(sessionID, msg.Role, contentStr, metaStr, ts); err != nil {
 				log.Printf("\nError inserting message: %v", err)
 			}
 		}

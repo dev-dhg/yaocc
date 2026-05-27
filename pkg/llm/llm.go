@@ -22,12 +22,36 @@ type Client struct {
 	HTTPClient *http.Client
 }
 
+type Attachment struct {
+	Type   string // "image" or "audio"
+	Data   string // base64 data
+	MIME   string // e.g. "image/jpeg"
+	Format string // e.g. "ogg", "mp3" (for audio input)
+}
+
+type ContentPart struct {
+	Type       string          `json:"type"`
+	Text       string          `json:"text,omitempty"`
+	ImageURL   *ImageURLPart   `json:"image_url,omitempty"`
+	InputAudio *InputAudioPart `json:"input_audio,omitempty"`
+}
+
+type ImageURLPart struct {
+	URL string `json:"url"` // "data:image/jpeg;base64,..."
+}
+
+type InputAudioPart struct {
+	Data   string `json:"data"`   // base64 encoded audio
+	Format string `json:"format"` // e.g., "wav", "mp3", "ogg"
+}
+
 type Message struct {
-	Role       string     `json:"role"`
-	Content    string     `json:"content"`
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"`
-	Name       string     `json:"name,omitempty"` // Used sometimes for tool responses
+	Role             string      `json:"role"`
+	Content          interface{} `json:"content"`
+	ReasoningContent string      `json:"reasoning_content,omitempty"` // DeepSeek thinking models
+	ToolCalls        []ToolCall  `json:"tool_calls,omitempty"`
+	ToolCallID       string      `json:"tool_call_id,omitempty"`
+	Name             string      `json:"name,omitempty"` // Used sometimes for tool responses
 }
 
 type Tool struct {
@@ -123,8 +147,8 @@ func NewClient(cfg config.ProviderConfig, selectedModel string) *Client {
 	}
 }
 
-// Chat sends messages and optional tools. Returns the text response, any tool calls, and error.
-func (c *Client) Chat(messages []Message, tools []Tool) (string, []ToolCall, error) {
+// Chat sends messages and optional tools. Returns the text response, reasoning content, any tool calls, and error.
+func (c *Client) Chat(messages []Message, tools []Tool) (string, string, []ToolCall, error) {
 	reqBody := ChatRequest{
 		Model:     c.Model,
 		Messages:  messages,
@@ -171,12 +195,12 @@ func (c *Client) Chat(messages []Message, tools []Tool) (string, []ToolCall, err
 
 	jsonData, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", nil, fmt.Errorf("failed to marshal request: %w", err)
+		return "", "", nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
 	req, err := http.NewRequest("POST", c.BaseURL+"/chat/completions", bytes.NewBuffer(jsonData))
 	if err != nil {
-		return "", nil, fmt.Errorf("failed to create request: %w", err)
+		return "", "", nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -186,13 +210,13 @@ func (c *Client) Chat(messages []Message, tools []Tool) (string, []ToolCall, err
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return "", nil, fmt.Errorf("failed to send request to %s (Model: %s): %w", c.BaseURL, c.Model, err)
+		return "", "", nil, fmt.Errorf("failed to send request to %s (Model: %s): %w", c.BaseURL, c.Model, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return "", nil, fmt.Errorf("API request to %s failed with status %d (Model: %s): %s", c.BaseURL, resp.StatusCode, c.Model, string(body))
+		return "", "", nil, fmt.Errorf("API request to %s failed with status %d (Model: %s): %s", c.BaseURL, resp.StatusCode, c.Model, string(body))
 	}
 
 	type ErrorResponse struct {
@@ -210,17 +234,22 @@ func (c *Client) Chat(messages []Message, tools []Tool) (string, []ToolCall, err
 	// Check for API Error
 	var errResp ErrorResponse
 	if err := json.Unmarshal(bodyBytes, &errResp); err == nil && errResp.Error.Message != "" {
-		return "", nil, fmt.Errorf("API Error from %s (Model: %s): %s (Code: %d)", c.BaseURL, c.Model, errResp.Error.Message, errResp.Error.Code)
+		return "", "", nil, fmt.Errorf("API Error from %s (Model: %s): %s (Code: %d)", c.BaseURL, c.Model, errResp.Error.Message, errResp.Error.Code)
 	}
 
 	var chatResp ChatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
-		return "", nil, fmt.Errorf("failed to decode response: %w", err)
+		return "", "", nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
 	if len(chatResp.Choices) == 0 {
-		return "", nil, fmt.Errorf("no choices returned from %s (Model: %s). Raw response: %s", c.BaseURL, c.Model, string(bodyBytes))
+		return "", "", nil, fmt.Errorf("no choices returned from %s (Model: %s). Raw response: %s", c.BaseURL, c.Model, string(bodyBytes))
 	}
 
-	return chatResp.Choices[0].Message.Content, chatResp.Choices[0].Message.ToolCalls, nil
+	msg := chatResp.Choices[0].Message
+	contentStr := ""
+	if str, ok := msg.Content.(string); ok {
+		contentStr = str
+	}
+	return contentStr, msg.ReasoningContent, msg.ToolCalls, nil
 }

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -93,6 +94,32 @@ type ModelConfig struct {
 	MaxTurns      int             `json:"maxTurns,omitempty"`  // Override global max turns
 	TimeoutMs     int             `json:"timeoutMs,omitempty"` // Model-specific timeout
 	Tool          *bool           `json:"tool,omitempty"`      // Set to false to disable native tools for this model
+}
+
+func (m ModelConfig) SupportsVision() bool {
+	if len(m.Input) == 0 {
+		return false
+	}
+	for _, cap := range m.Input {
+		capLower := strings.ToLower(cap)
+		if capLower == "vision" || capLower == "image" || capLower == "multimodal" {
+			return true
+		}
+	}
+	return false
+}
+
+func (m ModelConfig) SupportsAudio() bool {
+	if len(m.Input) == 0 {
+		return false
+	}
+	for _, cap := range m.Input {
+		capLower := strings.ToLower(cap)
+		if capLower == "audio" || capLower == "voice" {
+			return true
+		}
+	}
+	return false
 }
 
 type SamplingConfig struct {

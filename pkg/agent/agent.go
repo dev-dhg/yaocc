@@ -313,7 +313,7 @@ func (a *Agent) UpdateConfig(newCfg *config.Config) {
 	log.Println("Agent configuration updated and LLM re-initialized.")
 }
 
-func (a *Agent) Run(sessionID string, provider messaging.Provider, chatID, input string) (string, error) {
+func (a *Agent) Run(sessionID string, provider messaging.Provider, chatID, input string, attachments ...llm.Attachment) (string, error) {
 	// 1. Load History
 	limit := a.Config.Session.HistoryLimit
 	if limit == 0 {
@@ -333,7 +333,45 @@ func (a *Agent) Run(sessionID string, provider messaging.Provider, chatID, input
 		{Role: "system", Content: sysPrompt},
 	}
 	messages = append(messages, history...)
-	messages = append(messages, llm.Message{Role: "user", Content: input})
+
+	// Construct multimodal user message if model supports it and attachments are present
+	var userContent interface{} = input
+	m := a.GetCurrentModel()
+	hasVision := m != nil && m.SupportsVision()
+	hasAudio := m != nil && m.SupportsAudio()
+
+	if len(attachments) > 0 && (hasVision || hasAudio) {
+		var parts []llm.ContentPart
+		if input != "" {
+			parts = append(parts, llm.ContentPart{
+				Type: "text",
+				Text: input,
+			})
+		}
+		for _, att := range attachments {
+			if att.Type == "image" && hasVision {
+				parts = append(parts, llm.ContentPart{
+					Type: "image_url",
+					ImageURL: &llm.ImageURLPart{
+						URL: fmt.Sprintf("data:%s;base64,%s", att.MIME, att.Data),
+					},
+				})
+			} else if att.Type == "audio" && hasAudio {
+				parts = append(parts, llm.ContentPart{
+					Type: "input_audio",
+					InputAudio: &llm.InputAudioPart{
+						Data:   att.Data,
+						Format: att.Format,
+					},
+				})
+			}
+		}
+		if len(parts) > 0 {
+			userContent = parts
+		}
+	}
+
+	messages = append(messages, llm.Message{Role: "user", Content: userContent})
 
 	// 4. Save User Message
 	if err := a.Sessions.Append(sessionID, "user", input); err != nil {
@@ -370,14 +408,15 @@ func (a *Agent) Run(sessionID string, provider messaging.Provider, chatID, input
 		}
 
 		var response string
+		var reasoningContent string
 		var toolCalls []llm.ToolCall
 		var err error
 
 		if a.IsNativeToolCallingEnabled() {
 			tools := a.GetTools()
-			response, toolCalls, err = a.LLM.Chat(messages, tools)
+			response, reasoningContent, toolCalls, err = a.LLM.Chat(messages, tools)
 		} else {
-			response, toolCalls, err = a.LLM.Chat(messages, nil)
+			response, reasoningContent, toolCalls, err = a.LLM.Chat(messages, nil)
 		}
 
 		if err != nil {
@@ -403,8 +442,8 @@ func (a *Agent) Run(sessionID string, provider messaging.Provider, chatID, input
 		// Determine commands based on mode
 		var commands []string
 		if len(toolCalls) > 0 {
-			// Save the assistant message with tool calls
-			messages = append(messages, llm.Message{Role: "assistant", Content: response, ToolCalls: toolCalls})
+			// Save the assistant message with tool calls (include reasoning_content for DeepSeek thinking models)
+			messages = append(messages, llm.Message{Role: "assistant", Content: response, ReasoningContent: reasoningContent, ToolCalls: toolCalls})
 
 			// Process each tool call
 			for _, tc := range toolCalls {
@@ -688,7 +727,7 @@ func (a *Agent) RunTask(sessionID, prompt, contextMsg string) (string, error) {
 	}
 
 	// Call LLM
-	response, _, err := a.LLM.Chat(messages, nil)
+	response, _, _, err := a.LLM.Chat(messages, nil)
 	if err != nil {
 		log.Printf("RunTask: LLM error: %v", err)
 		return "", err
@@ -1093,7 +1132,7 @@ func (a *Agent) UpdateSessionSummary(sessionID string) {
 		{Role: "user", Content: prompt},
 	}
 
-	newSummary, _, err := a.SummaryLLM.Chat(summaryMsg, nil)
+	newSummary, _, _, err := a.SummaryLLM.Chat(summaryMsg, nil)
 	if err != nil {
 		log.Printf("Failed to generate summary: %v", err)
 		return

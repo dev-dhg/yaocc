@@ -212,7 +212,7 @@ func (s *Scheduler) RunJob(job config.CronJob) {
 			{Role: "user", Content: finalPrompt},
 		}
 
-		response, _, err := s.Agent.LLM.Chat(messages, nil)
+		response, _, _, err := s.Agent.LLM.Chat(messages, nil)
 		if err != nil {
 			log.Printf("Error running stateless cron job %s: %v", job.Name, err)
 			return

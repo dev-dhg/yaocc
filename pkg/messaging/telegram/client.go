@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/dev-dhg/yaocc/pkg/agent"
 	"github.com/dev-dhg/yaocc/pkg/config"
+	"github.com/dev-dhg/yaocc/pkg/llm"
 	"github.com/dev-dhg/yaocc/pkg/utils"
 )
 
@@ -26,6 +28,7 @@ type Client struct {
 	Agent        *agent.Agent
 	Offset       int
 	HttpClient   *http.Client
+	BotUsername  string
 }
 
 func NewClient(cfg config.TelegramConfig, agt *agent.Agent) *Client {
@@ -48,6 +51,7 @@ func (c *Client) StartPolling() {
 		log.Printf("Warning: failed to get bot info: %v", err)
 	} else {
 		log.Printf("Starting Telegram polling for bot @%s", me.Username)
+		c.BotUsername = me.Username
 	}
 
 	for {
@@ -101,19 +105,49 @@ func (c *Client) GetMe() (*User, error) {
 	return &result.Result, nil
 }
 
+type Chat struct {
+	ID   int64  `json:"id"`
+	Type string `json:"type"` // "private", "group", "supergroup", "channel"
+}
+
+type PhotoSize struct {
+	FileID   string `json:"file_id"`
+	FileSize int    `json:"file_size"`
+}
+
+type Voice struct {
+	FileID   string `json:"file_id"`
+	MimeType string `json:"mime_type"`
+}
+
+type Audio struct {
+	FileID   string `json:"file_id"`
+	MimeType string `json:"mime_type"`
+}
+
+type MessageEntity struct {
+	Type   string `json:"type"` // "mention", "text_mention", "bot_command"
+	Offset int    `json:"offset"`
+	Length int    `json:"length"`
+}
+
 type Update struct {
 	UpdateID int      `json:"update_id"`
 	Message  *Message `json:"message"`
 }
 
 type Message struct {
-	Chat struct {
-		ID int64 `json:"id"`
-	} `json:"chat"`
-	From struct {
-		ID int64 `json:"id"`
-	} `json:"from"`
-	Text string `json:"text"`
+	MessageID       int             `json:"message_id"`
+	Chat            Chat            `json:"chat"`
+	From            User            `json:"from"`
+	Text            string          `json:"text"`
+	Caption         string          `json:"caption"`
+	Photo           []PhotoSize     `json:"photo"`
+	Voice           *Voice          `json:"voice"`
+	Audio           *Audio          `json:"audio"`
+	Entities        []MessageEntity `json:"entities"`
+	CaptionEntities []MessageEntity `json:"caption_entities"`
+	ReplyToMessage  *Message        `json:"reply_to_message"`
 }
 
 type GetUpdatesResponse struct {
@@ -142,11 +176,19 @@ func (c *Client) getUpdates() ([]Update, error) {
 }
 
 func (c *Client) handleUpdate(update Update) {
-	if update.Message == nil || update.Message.Text == "" {
+	if update.Message == nil {
 		return
 	}
 
-	userID := strconv.FormatInt(update.Message.From.ID, 10)
+	msg := update.Message
+
+	// Extract prompt text
+	text := msg.Text
+	if text == "" {
+		text = msg.Caption
+	}
+
+	userID := strconv.FormatInt(msg.From.ID, 10)
 	allowed := false
 	for _, allowedUser := range c.AllowedUsers {
 		if allowedUser == userID {
@@ -160,10 +202,141 @@ func (c *Client) handleUpdate(update Update) {
 		return
 	}
 
-	chatID := update.Message.Chat.ID
+	isPrivate := msg.Chat.Type == "private" || msg.Chat.Type == ""
+	isMentioned := c.isMentioned(msg)
+	isReplyToBot := c.isReplyToBot(msg)
+
+	// In groups/supergroups, only respond if mentioned or replied to
+	if !isPrivate && !isMentioned && !isReplyToBot {
+		return
+	}
+
+	// Remove bot mention from prompt text if in a group
+	if !isPrivate {
+		text = c.removeMention(text)
+	}
+
+	// Fetch active model capabilities to verify if vision/audio is supported
+	m := c.Agent.GetCurrentModel()
+	hasVision := m != nil && m.SupportsVision()
+	hasAudio := m != nil && m.SupportsAudio()
+
+	var attachments []llm.Attachment
+
+	// 1. Check for Photo Attachments
+	if len(msg.Photo) > 0 {
+		if !hasVision {
+			text = "[Image message skipped: active model does not support vision]\n" + text
+			log.Printf("Skipping photo: active model %s does not support vision", c.Agent.Config.Models.Selected)
+		} else {
+			// Get largest photo (last element)
+			photo := msg.Photo[len(msg.Photo)-1]
+			log.Printf("Downloading photo %s...", photo.FileID)
+			base64Data, err := c.DownloadFileBase64(photo.FileID)
+			if err != nil {
+				log.Printf("Error downloading photo: %v", err)
+				text = "[Error downloading image from Telegram]\n" + text
+			} else {
+				attachments = append(attachments, llm.Attachment{
+					Type: "image",
+					Data: base64Data,
+					MIME: "image/jpeg",
+				})
+			}
+		}
+	}
+
+	// 2. Check for Voice messages
+	if msg.Voice != nil {
+		if !hasAudio {
+			text = "[Voice message skipped: active model does not support audio]\n" + text
+			log.Printf("Skipping voice: active model %s does not support audio", c.Agent.Config.Models.Selected)
+		} else {
+			log.Printf("Downloading voice message %s...", msg.Voice.FileID)
+			base64Data, err := c.DownloadFileBase64(msg.Voice.FileID)
+			if err != nil {
+				log.Printf("Error downloading voice: %v", err)
+				text = "[Error downloading voice message from Telegram]\n" + text
+			} else {
+				mime := msg.Voice.MimeType
+				if mime == "" {
+					mime = "audio/ogg"
+				}
+				attachments = append(attachments, llm.Attachment{
+					Type:   "audio",
+					Data:   base64Data,
+					MIME:   mime,
+					Format: "ogg",
+				})
+			}
+		}
+	}
+
+	// 3. Check for Audio files
+	if msg.Audio != nil {
+		if !hasAudio {
+			text = "[Audio file skipped: active model does not support audio]\n" + text
+			log.Printf("Skipping audio file: active model %s does not support audio", c.Agent.Config.Models.Selected)
+		} else {
+			log.Printf("Downloading audio file %s...", msg.Audio.FileID)
+			base64Data, err := c.DownloadFileBase64(msg.Audio.FileID)
+			if err != nil {
+				log.Printf("Error downloading audio: %v", err)
+				text = "[Error downloading audio file from Telegram]\n" + text
+			} else {
+				mime := msg.Audio.MimeType
+				if mime == "" {
+					mime = "audio/mpeg"
+				}
+				attachments = append(attachments, llm.Attachment{
+					Type:   "audio",
+					Data:   base64Data,
+					MIME:   mime,
+					Format: "mp3",
+				})
+			}
+		}
+	}
+
+	// Set default prompt if media was sent with no text
+	if text == "" && len(attachments) > 0 {
+		if attachments[0].Type == "image" {
+			text = "Describe this image."
+		} else if attachments[0].Type == "audio" {
+			text = "Listen to this audio and respond."
+		}
+	}
+
+	// If no text prompt and no attachments, nothing to do
+	if text == "" && len(attachments) == 0 {
+		return
+	}
+
+	// Handle Reply context - include replied message content
+	if msg.ReplyToMessage != nil {
+		replied := msg.ReplyToMessage
+		repliedText := replied.Text
+		if repliedText == "" {
+			repliedText = replied.Caption
+		}
+		if repliedText == "" {
+			if len(replied.Photo) > 0 {
+				repliedText = "(media: photo)"
+			} else if replied.Voice != nil {
+				repliedText = "(media: voice)"
+			} else if replied.Audio != nil {
+				repliedText = "(media: audio)"
+			} else {
+				repliedText = "(media)"
+			}
+		}
+		text = fmt.Sprintf("[Replying to %s: \"%s\"]\n%s", replied.From.Username, repliedText, text)
+	}
+
+	chatID := msg.Chat.ID
 	sessionID := fmt.Sprintf("telegram-%d", chatID)
 
-	log.Printf("Received message from %s: %s", sessionID, update.Message.Text)
+	log.Printf("Received message from %s: %s (attachments: %d)", sessionID, text, len(attachments))
 
 	// Start continuous typing action
 	done := make(chan struct{})
@@ -186,30 +359,114 @@ func (c *Client) handleUpdate(update Update) {
 	// Ensure we stop the ticker when this function exits (success or error)
 	defer close(done)
 
-	// Process with Agent
-	response, err := c.Agent.Run(sessionID, c, strconv.FormatInt(chatID, 10), update.Message.Text)
+	// Process with Agent, passing any base64 attachments
+	response, err := c.Agent.Run(sessionID, c, strconv.FormatInt(chatID, 10), text, attachments...)
 	if err != nil {
 		log.Printf("Agent error: %v", err)
 		c.sendMessageInt64(chatID, fmt.Sprintf("Error: %v", err))
 		return
 	}
 
-	// Parse targetID (string) from sessionID?
-	// The Agent returns just text. The client needs to reply to the same chatID.
-	// But `handleUpdate` has `chatID` (int64) locally available.
-	// So we can call `c.sendMessageInt64(chatID, response)` directly.
-	// We don't use the generic interface methods inside `handleUpdate` necessarily,
-	// but we could if we wanted to be perfectly generic.
-	// But `handleUpdate` is specific to Telegram updates.
-	// So using internal methods is fine.
-
-	// However, we recently changed `SendMessage` to be generic string ID.
-	// So we should call `c.sendMessageInt64(chatID, response)`.
-	// Parse targetID (string) from sessionID?
-	// The Agent returns just text. The client needs to reply to the same chatID.
-	// But `handleUpdate` has `chatID` (int64) locally available.
-	// So we can call `c.sendMessageInt64(chatID, response)` directly.
 	c.sendMessageInt64(chatID, response)
+}
+
+func (c *Client) isMentioned(msg *Message) bool {
+	if c.BotUsername == "" {
+		return false
+	}
+	botMention := "@" + strings.ToLower(c.BotUsername)
+
+	// Check text entities
+	for _, entity := range msg.Entities {
+		if entity.Type == "mention" {
+			end := entity.Offset + entity.Length
+			if end <= len(msg.Text) {
+				mention := strings.ToLower(msg.Text[entity.Offset:end])
+				if mention == botMention {
+					return true
+				}
+			}
+		}
+	}
+
+	// Check caption entities
+	for _, entity := range msg.CaptionEntities {
+		if entity.Type == "mention" {
+			end := entity.Offset + entity.Length
+			if end <= len(msg.Caption) {
+				mention := strings.ToLower(msg.Caption[entity.Offset:end])
+				if mention == botMention {
+					return true
+				}
+			}
+		}
+	}
+
+	// Fallback substring checks
+	if strings.Contains(strings.ToLower(msg.Text), botMention) ||
+		strings.Contains(strings.ToLower(msg.Caption), botMention) {
+		return true
+	}
+
+	return false
+}
+
+func (c *Client) isReplyToBot(msg *Message) bool {
+	if msg.ReplyToMessage == nil || c.BotUsername == "" {
+		return false
+	}
+	return strings.ToLower(msg.ReplyToMessage.From.Username) == strings.ToLower(c.BotUsername)
+}
+
+func (c *Client) removeMention(text string) string {
+	if c.BotUsername == "" {
+		return text
+	}
+	botMention := "@" + c.BotUsername
+	re := regexp.MustCompile("(?i)" + regexp.QuoteMeta(botMention))
+	text = re.ReplaceAllString(text, "")
+	return strings.TrimSpace(text)
+}
+
+func (c *Client) DownloadFileBase64(fileID string) (string, error) {
+	url := fmt.Sprintf("https://api.telegram.org/bot%s/getFile?file_id=%s", c.Token, fileID)
+	resp, err := c.HttpClient.Get(url)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Ok     bool `json:"ok"`
+		Result struct {
+			FilePath string `json:"file_path"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", err
+	}
+
+	if !result.Ok || result.Result.FilePath == "" {
+		return "", fmt.Errorf("failed to get file path from telegram")
+	}
+
+	downloadURL := fmt.Sprintf("https://api.telegram.org/file/bot%s/%s", c.Token, result.Result.FilePath)
+	fileResp, err := c.HttpClient.Get(downloadURL)
+	if err != nil {
+		return "", err
+	}
+	defer fileResp.Body.Close()
+
+	if fileResp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("failed to download file, status: %d", fileResp.StatusCode)
+	}
+
+	fileBytes, err := io.ReadAll(fileResp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	return base64.StdEncoding.EncodeToString(fileBytes), nil
 }
 
 func (c *Client) SendChatAction(chatID int64, action string) error {

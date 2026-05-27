@@ -185,9 +185,31 @@ YAOCC supports multiple messaging providers via a unified interface.
 
 ## Agent Capabilities & Media Support
 
-The Agent can be extended to support rich media interactions. Currently, the Agent supports sending **Images**, **Audio**, **Video**, and **Documents** through specific text protocols that the messaging clients intercept.
+The Agent can be extended to support rich media interactions. Currently, the Agent supports both **sending** and **receiving** multimodal media (Images, Audio, Video, and Documents).
 
-### Media Protocol
+### Receiving Media & Multimodal Support
+
+YAOCC supports receiving photos, voice messages, and audio files via Telegram and passing them as base64-encoded multimodal attachments to the LLM (matching the OpenAI completions API spec).
+
+**1. Model Configuration**:
+To enable media forwarding for a specific model, define its capabilities in the `input` array inside your `config.json`:
+```json
+{
+  "id": "gemini-flash",
+  "model": "gemini-2.5-flash",
+  "name": "Gemini 2.5 Flash",
+  "input": ["text", "vision", "audio"]
+}
+```
+- `"vision"` or `"image"` enables image inputs.
+- `"audio"` or `"voice"` enables audio inputs.
+
+**2. Telegram Group Mentions & Context**:
+- **Private Chats**: Media and messages are always processed.
+- **Group Chats**: Media and messages are ignored unless the bot is mentioned (e.g. `@BotUsername`) or a message is a reply to the bot's response.
+- **Reply Context**: If you reply to another message, the replied-to message context is automatically captured and prepended to your prompt.
+
+### Outbound Media Protocol (Sending)
 
 To send media files, the Agent (or any Skill) should output a message starting with one of the following prefixes:
 

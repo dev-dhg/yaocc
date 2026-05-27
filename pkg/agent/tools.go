@@ -28,16 +28,20 @@ func GetBuiltinToolSchemas(skillName, description string) []llm.Tool {
 			fullDesc = fmt.Sprintf("%s - %s", description, actionDesc)
 		}
 
+		params := map[string]interface{}{
+			"type":       "object",
+			"properties": props,
+		}
+		if len(req) > 0 {
+			params["required"] = req
+		}
+
 		tools = append(tools, llm.Tool{
 			Type: "function",
 			Function: llm.ToolFunction{
 				Name:        name,
 				Description: fullDesc,
-				Parameters: map[string]interface{}{
-					"type":       "object",
-					"properties": props,
-					"required":   req,
-				},
+				Parameters:  params,
 			},
 		})
 	}
