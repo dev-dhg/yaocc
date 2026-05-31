@@ -129,23 +129,16 @@ func GetBuiltinToolSchemas(skillName, description string) []llm.Tool {
 		}, []string{"message"})
 
 	case "skills":
-		addTool("register", "Register a new skill from a script", map[string]interface{}{
-			"name": prop("string", "The name of the skill to register."),
-			"path": prop("string", "The path to the script."),
-		}, []string{"name", "path"})
-		addTool("unregister", "Unregister an existing skill", map[string]interface{}{
-			"name": prop("string", "The name of the skill."),
-		}, []string{"name"})
-		addTool("list", "List all registered and built-in skills", nil, nil)
-		addTool("get", "Read the SKILL.md instructions for a skill", map[string]interface{}{
+		addTool("list", "List all available built-in and custom skills", nil, nil)
+		addTool("get", "Read the SKILL.md instructions manual for a specific skill", map[string]interface{}{
 			"name": prop("string", "The name of the skill."),
 		}, []string{"name"})
 		addTool("tutorial", "Read the tutorial on creating skills", nil, nil)
 		addTool("help", "Print help for skills management", nil, nil)
 
-		addTool("run", "Execute a registered YAOCC custom skill explicitly.", map[string]interface{}{
+		addTool("run", "Execute a YAOCC custom skill explicitly by displaying its instruction manual and arguments.", map[string]interface{}{
 			"name": prop("string", "The name of the custom skill you want to run."),
-			"args": prop("string", "The command line string arguments to specifically pass to the custom skill."),
+			"args": prop("string", "The command line string arguments to pass to the custom skill."),
 		}, []string{"name"})
 
 	default:
@@ -281,9 +274,6 @@ func BuildBuiltinCommandArgs(toolName string, rawArgs map[string]interface{}) ([
 
 		if name, ok := rawArgs["name"].(string); ok {
 			args = append(args, name)
-		}
-		if path, ok := rawArgs["path"].(string); ok {
-			args = append(args, path)
 		}
 		return args, nil
 	}

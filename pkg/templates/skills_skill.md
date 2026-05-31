@@ -1,14 +1,14 @@
 ---
 name: skills
-description: Register, unregister, list, and manage custom user skills.
+description: List, read instructions, and run custom user skills.
 tags:
   - built-in
 ---
 
 # Skills Management
 
-The `skills` command allows you to manage custom, user-provided skills locally in the configuration environment.
-You can register new scripts to be executable as skills, unregister them, list all available skills, or fetch the instructions (SKILL.md) for a registered skill.
+The `skills` command allows you to view and execute local skills in the configuration environment.
+Any subdirectory in the `skills` directory containing a `SKILL.md` (or `skill.md`) file is automatically recognized as an available skill.
 
 ## Usage
 
@@ -18,8 +18,7 @@ yaocc skills <command> [args]
 
 ### Commands
 
-- **`register <name> <path>`**: Registers a new local script or executable as a skill tied to `<name>`.
-- **`unregister <name>`**: Removes a registered custom skill from the configuration memory.
-- **`list`**: Lists all known built-in skills and custom registered skills.
-- **`get <name>`**: Reads the `SKILL.md` instruction manual tied to a specific registered capability.
-- **`tutorial`**: Reads the YAOCC comprehensive tutorial on writing your own local scripts!
+- **`list`**: Lists all available skills.
+- **`get <name>`**: Reads the `SKILL.md` instruction manual for a specific skill.
+- **`run <name> [args]`**: Run a custom skill by providing its name and any arguments. This displays its manual instructions and parameters for the agent to follow.
+- **`tutorial`**: Reads the YAOCC comprehensive tutorial on writing your own local skills!

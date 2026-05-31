@@ -1,6 +1,4 @@
 ARG YAOCC_BASE_IMAGE=alpine:latest
-ARG YAOCC_DOCKER_APK_PACKAGES=""
-ARG YAOCC_DOCKER_RUN_COMMANDS=""
 
 # Build Stage
 FROM golang:alpine AS builder
@@ -33,6 +31,9 @@ RUN LDFLAGS="-X github.com/dev-dhg/yaocc/pkg/version.Version=${YAOCC_VERSION} \
 
 # Final Stage
 FROM ${YAOCC_BASE_IMAGE}
+
+ARG YAOCC_DOCKER_APK_PACKAGES=""
+ARG YAOCC_DOCKER_RUN_COMMANDS=""
 
 WORKDIR /app
 

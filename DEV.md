@@ -119,17 +119,15 @@ Both GitLab CI and GitHub Actions automatically inject version info:
 YAOCC uses a split configuration architecture:
 - **`config.json`**: General settings (models, messaging, server, storage, websearch, session, etc.).
 - **`cron.json`**: Cron job definitions (independently watched, changes only reload the scheduler).
-- **`skills_register.json`**: Registered custom skills (independently watched, no agent restart needed).
 
 Copy the example files to get started:
 - `config.json.example` → `config.json`
 - `cron.json.example` → `cron.json`
-- `skills_register.json.example` → `skills_register.json`
 
 Environment variables can be used in config files using `${VAR_NAME}` syntax.
 
 ### Automatic Migration
-If you have an existing `config.json` with `cron` or `skills.registered` fields, YAOCC will automatically migrate them to `cron.json` and `skills_register.json` on first startup and clean up the old fields from `config.json`.
+If you have an existing `config.json` with `cron` fields, YAOCC will automatically migrate them to `cron.json` on first startup and clean up the old fields from `config.json`.
 
 ## Testing
 

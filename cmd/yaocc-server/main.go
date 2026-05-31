@@ -103,19 +103,7 @@ func main() {
 		scheduler.Reload(cfg)
 	})
 
-	// Start independent skills_register.json watcher
-	skillsRegPath := filepath.Join(configDir, "skills_register.json")
-	go config.WatchFile(skillsRegPath, func() {
-		log.Println("[SkillsWatcher] skills_register.json changed, updating agent skills registry...")
-		reg, err := config.LoadSkillsRegister(configDir)
-		if err != nil {
-			log.Printf("[SkillsWatcher] Error loading skills_register.json: %v", err)
-			return
-		}
-		// Update in-memory config with new registration
-		cfg.Skills.Registered = reg.Registered
-		log.Printf("[SkillsWatcher] Skills registry updated: %d registered skills", len(reg.Registered))
-	})
+
 
 	// Start Server
 	srv := server.NewServer(cfg, myAgent, providers, scheduler)

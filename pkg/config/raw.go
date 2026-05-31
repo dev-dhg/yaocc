@@ -103,24 +103,4 @@ func UpdateCronRawWithDir(configDir string, modifier func([]CronJob) ([]CronJob,
 	return SaveCronJobs(configDir, jobs)
 }
 
-// UpdateSkillsRegisterRaw reads skills_register.json, applies a modifier, and writes it back.
-// This does NOT touch config.json at all.
-func UpdateSkillsRegisterRaw(modifier func(*SkillsRegister) error) error {
-	_ = godotenv.Load()
-	configDir := ResolveConfigDir()
-	return UpdateSkillsRegisterRawWithDir(configDir, modifier)
-}
 
-// UpdateSkillsRegisterRawWithDir reads skills_register.json from a specific directory, applies modifier, and writes back.
-func UpdateSkillsRegisterRawWithDir(configDir string, modifier func(*SkillsRegister) error) error {
-	reg, err := LoadSkillsRegister(configDir)
-	if err != nil {
-		return err
-	}
-
-	if err := modifier(reg); err != nil {
-		return err
-	}
-
-	return SaveSkillsRegister(configDir, reg)
-}
