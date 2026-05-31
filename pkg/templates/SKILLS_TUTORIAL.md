@@ -55,6 +55,8 @@ Your skill is automatically discovered! There is no registration step.
    yaocc skills run weather Paris
    # or simply:
    yaocc weather Paris
+   # preferable
+   yaocc file run skills/weather/weather.js Paris
    ```
 
 That's it! Adding skills is completely automated and lightweight.

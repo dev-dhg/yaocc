@@ -281,6 +281,26 @@ func (c *ChatDB) LoadSummary(sessionID string) (string, error) {
 	return summary, err
 }
 
+// ClearSession deletes all messages and summary checkpoints for a given session.
+func (c *ChatDB) ClearSession(sessionID string) error {
+	tx, err := c.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`DELETE FROM messages WHERE session_id = ?`, sessionID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM summary_checkpoints WHERE session_id = ?`, sessionID); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+
+
 // FormatMessages formats a slice of ChatMessages into a human-readable string.
 func FormatMessages(messages []ChatMessage) string {
 	if len(messages) == 0 {

@@ -202,6 +202,70 @@ func (c *Client) handleUpdate(update Update) {
 		return
 	}
 
+	// Command parsing
+	if text != "" {
+		trimmedText := strings.TrimSpace(text)
+		if strings.HasPrefix(trimmedText, "/") {
+			// Extract command name
+			fields := strings.Fields(trimmedText)
+			cmdName := fields[0]
+			// Strip bot username suffix if present (e.g. /history-clear@botname -> /history-clear)
+			if strings.Contains(cmdName, "@") {
+				parts := strings.SplitN(cmdName, "@", 2)
+				cmdName = parts[0]
+			}
+
+			chatID := msg.Chat.ID
+			sessionID := fmt.Sprintf("telegram-%d", chatID)
+
+			switch cmdName {
+			case "/history-clear":
+				log.Printf("Clearing chat history for session %s via /history-clear command", sessionID)
+				err := c.Agent.Sessions.Clear(sessionID)
+				if err != nil {
+					log.Printf("Error clearing chat history: %v", err)
+					c.sendMessageInt64(chatID, "❌ <b>Error:</b> Failed to clear history.")
+				} else {
+					c.sendMessageInt64(chatID, "🧹 <b>Chat history cleared!</b> Your session is now fresh and clean.")
+				}
+				return
+
+			case "/memory-clear":
+				log.Printf("Clearing long-term memory for agent via /memory-clear command")
+				err := c.Agent.ClearMemory()
+				if err != nil {
+					log.Printf("Error clearing memory: %v", err)
+					c.sendMessageInt64(chatID, "❌ <b>Error:</b> Failed to clear memory.")
+				} else {
+					c.sendMessageInt64(chatID, "🧠 <b>Long-term memory cleared!</b>")
+				}
+				return
+
+			case "/memory-clear-all":
+				log.Printf("Clearing all memory files for agent via /memory-clear-all command")
+				err := c.Agent.ClearMemoryAll()
+				if err != nil {
+					log.Printf("Error clearing all memories: %v", err)
+					c.sendMessageInt64(chatID, "❌ <b>Error:</b> Failed to clear all memories.")
+				} else {
+					c.sendMessageInt64(chatID, "🧠💥 <b>All long-term and daily memory contexts cleared!</b>")
+				}
+				return
+
+			case "/list", "/help":
+				log.Printf("Listing all available commands via %s command", cmdName)
+				helpText := "<b>Available Commands:</b>\n" +
+					"• <code>/history-clear</code> — Wipes all chat history and summaries for this session.\n" +
+					"• <code>/memory-clear</code> — Clears long-term memory (MEMORY.md).\n" +
+					"• <code>/memory-clear-all</code> — Clears long-term memory and all daily files inside memory/ folder.\n" +
+					"• <code>/list</code> — Lists all available commands."
+				c.sendMessageInt64(chatID, helpText)
+				return
+			}
+		}
+	}
+
+
 	isPrivate := msg.Chat.Type == "private" || msg.Chat.Type == ""
 	isMentioned := c.isMentioned(msg)
 	isReplyToBot := c.isReplyToBot(msg)

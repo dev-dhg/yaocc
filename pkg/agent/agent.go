@@ -29,7 +29,7 @@ type Agent struct {
 	User       string
 	Rules      string
 	Memory     string
-	Sessions   SessionStore
+	Sessions   *SessionStore
 	Verbose    bool
 	LogFile    string
 	configDir  string
@@ -87,59 +87,15 @@ func NewAgent(cfg *config.Config, configDir string, verbose bool, logFile string
 	identity := readFileOrDefault(filepath.Join(configDir, "IDENTITY.md"), "")
 	user := readFileOrDefault(filepath.Join(configDir, "USER.md"), "")
 
-	// Load memories: long-term, today, yesterday
-	memory := readFileOrDefault(filepath.Join(configDir, "MEMORY.md"), "")
-
 	agentsRules := readFileOrDefault(filepath.Join(configDir, "AGENTS.md"), "")
 
-	now := time.Now()
-	today := now.Format("2006-01-02")
-	yesterday := now.AddDate(0, 0, -1).Format("2006-01-02")
-
-	todayMem := readFileOrDefault(filepath.Join(configDir, "memory", today+".md"), "")
-	yesterdayMem := readFileOrDefault(filepath.Join(configDir, "memory", yesterday+".md"), "")
-
-	var memBuilder strings.Builder
-	memBuilder.WriteString("# Current Memory Context\n\n")
-
-	if memory != "" {
-		memBuilder.WriteString(fmt.Sprintf("## Long-Term Memory (MEMORY.md)\n%s\n\n", memory))
-	} else {
-		memBuilder.WriteString("## Long-Term Memory (MEMORY.md)\n[Empty]\n\n")
-	}
-
-	if yesterdayMem != "" {
-		memBuilder.WriteString(fmt.Sprintf("## Yesterday's Context (memory/%s.md)\n%s\n\n", yesterday, yesterdayMem))
-	} else {
-		memBuilder.WriteString(fmt.Sprintf("## Yesterday's Context (memory/%s.md)\n[Empty]\n\n", yesterday))
-	}
-
-	if todayMem != "" {
-		memBuilder.WriteString(fmt.Sprintf("## Today's Context (memory/%s.md)\n%s\n\n", today, todayMem))
-	} else {
-		memBuilder.WriteString(fmt.Sprintf("## Today's Context (memory/%s.md)\n[Empty]\n\n", today))
-	}
-
-	finalMemory := strings.TrimSpace(memBuilder.String())
-
 	// Initialize Agent
-	// Use configDir for sessions
 	sessionsDir := filepath.Join(configDir, "sessions")
-	
-	var sessions SessionStore
-	if cfg.Session.HistoryMode == "db" {
-		dbStore, err := NewDBSessionStore(sessionsDir)
-		if err != nil {
-			log.Printf("Failed to init SQLite session store, falling back to basic md: %v", err)
-			sessions = NewSessionManager(sessionsDir)
-		} else {
-			sessions = dbStore
-			log.Printf("Using SQLite DB mode for sessions (limit: %d)", cfg.Session.HistoryLimit)
-		}
-	} else {
-		sessions = NewSessionManager(sessionsDir)
-		log.Printf("Using standard MD mode for sessions (limit: %d)", cfg.Session.HistoryLimit)
+	sessions, err := NewSessionStore(sessionsDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to init SQLite session store: %w", err)
 	}
+	log.Printf("Using SQLite DB mode for sessions (limit: %d)", cfg.Session.HistoryLimit)
 
 	agent := &Agent{
 		Config:     cfg,
@@ -148,13 +104,13 @@ func NewAgent(cfg *config.Config, configDir string, verbose bool, logFile string
 		Identity:   identity,
 		User:       user,
 		Rules:      agentsRules,
-		Memory:     finalMemory,
 		Sessions:   sessions,
 		Verbose:    verbose,
 		LogFile:    logFile,
 		configDir:  configDir,
 		MCPServers: make(map[string]*mcp.Client),
 	}
+	agent.ReloadMemory()
 
 	// Initialize LLM
 	if err := agent.initLLM(); err != nil {
@@ -184,6 +140,77 @@ func NewAgent(cfg *config.Config, configDir string, verbose bool, logFile string
 	}
 
 	return agent, nil
+}
+
+// ReloadMemory dynamically re-reads long-term and daily memories from disk and re-populates the agent context.
+func (a *Agent) ReloadMemory() {
+	memory := readFileOrDefault(filepath.Join(a.configDir, "MEMORY.md"), "")
+
+	now := time.Now()
+	today := now.Format("2006-01-02")
+	yesterday := now.AddDate(0, 0, -1).Format("2006-01-02")
+
+	todayMem := readFileOrDefault(filepath.Join(a.configDir, "memory", today+".md"), "")
+	yesterdayMem := readFileOrDefault(filepath.Join(a.configDir, "memory", yesterday+".md"), "")
+
+	var memBuilder strings.Builder
+	memBuilder.WriteString("# Current Memory Context\n\n")
+
+	if memory != "" {
+		memBuilder.WriteString(fmt.Sprintf("## Long-Term Memory (MEMORY.md)\n%s\n\n", memory))
+	} else {
+		memBuilder.WriteString("## Long-Term Memory (MEMORY.md)\n[Empty]\n\n")
+	}
+
+	if yesterdayMem != "" {
+		memBuilder.WriteString(fmt.Sprintf("## Yesterday's Context (memory/%s.md)\n%s\n\n", yesterday, yesterdayMem))
+	} else {
+		memBuilder.WriteString(fmt.Sprintf("## Yesterday's Context (memory/%s.md)\n[Empty]\n\n", yesterday))
+	}
+
+	if todayMem != "" {
+		memBuilder.WriteString(fmt.Sprintf("## Today's Context (memory/%s.md)\n%s\n\n", today, todayMem))
+	} else {
+		memBuilder.WriteString(fmt.Sprintf("## Today's Context (memory/%s.md)\n[Empty]\n\n", today))
+	}
+
+	a.Memory = strings.TrimSpace(memBuilder.String())
+}
+
+// ClearMemory clears the long-term MEMORY.md file on disk and reloads context.
+func (a *Agent) ClearMemory() error {
+	path := filepath.Join(a.configDir, "MEMORY.md")
+	if err := os.WriteFile(path, []byte(""), 0644); err != nil {
+		return fmt.Errorf("failed to clear MEMORY.md: %w", err)
+	}
+	a.ReloadMemory()
+	return nil
+}
+
+// ClearMemoryAll clears MEMORY.md and deletes all daily memory files inside the memory/ folder.
+func (a *Agent) ClearMemoryAll() error {
+	if err := a.ClearMemory(); err != nil {
+		return err
+	}
+
+	memoryDir := filepath.Join(a.configDir, "memory")
+	if _, err := os.Stat(memoryDir); err == nil {
+		files, err := os.ReadDir(memoryDir)
+		if err != nil {
+			return fmt.Errorf("failed to read memory directory: %w", err)
+		}
+		for _, f := range files {
+			if !f.IsDir() {
+				filePath := filepath.Join(memoryDir, f.Name())
+				if err := os.Remove(filePath); err != nil {
+					log.Printf("Warning: failed to remove memory file %s: %v", filePath, err)
+				}
+			}
+		}
+	}
+
+	a.ReloadMemory()
+	return nil
 }
 
 func readFileOrDefault(path, defaultContent string) string {
@@ -482,49 +509,45 @@ func (a *Agent) Run(sessionID string, provider messaging.Provider, chatID, input
 							}
 						} else if tc.Function.Name == "yaocc_chat_history_search" || tc.Function.Name == "yaocc_chat_history_recent" {
 							// Internal DB Tool Handling
-							if dbStore, ok := a.Sessions.(*DBSessionStore); ok {
-								limit := 10
-								if l, ok := rawArgs["limit"].(float64); ok { limit = int(l) }
-								
-								if tc.Function.Name == "yaocc_chat_history_recent" {
-									msgs, err := dbStore.DB().LoadHistory(chatID, limit)
-									if err != nil {
-										toolResult = fmt.Sprintf("Error retrieving history: %v", err)
-									} else {
-										toolResult = chatdb.FormatMessages(msgs)
-									}
+							limit := 10
+							if l, ok := rawArgs["limit"].(float64); ok { limit = int(l) }
+							
+							if tc.Function.Name == "yaocc_chat_history_recent" {
+								msgs, err := a.Sessions.DB().LoadHistory(chatID, limit)
+								if err != nil {
+									toolResult = fmt.Sprintf("Error retrieving history: %v", err)
 								} else {
-									query, _ := rawArgs["query"].(string)
-									fromStr, _ := rawArgs["from"].(string)
-									toStr, _ := rawArgs["to"].(string)
-
-									if fromStr != "" && toStr != "" {
-										from, err1 := time.Parse("2006-01-02", fromStr)
-										to, err2 := time.Parse("2006-01-02", toStr)
-										if err1 == nil && err2 == nil {
-											// Make 'to' end of day
-											to = to.Add(24 * time.Hour).Add(-time.Nanosecond)
-											if query != "" {
-												msgs, err := dbStore.DB().SearchByDateAndQuery(chatID, query, from, to, limit)
-												if err == nil { toolResult = chatdb.FormatMessages(msgs) } else { toolResult = err.Error() }
-											} else {
-												msgs, err := dbStore.DB().SearchByDate(chatID, from, to, limit)
-												if err == nil { toolResult = chatdb.FormatMessages(msgs) } else { toolResult = err.Error() }
-											}
-										} else {
-											toolResult = "Error parsing dates. Please use YYYY-MM-DD format."
-										}
-									} else if query != "" {
-										msgs, err := dbStore.DB().Search(chatID, query, limit)
-										if err != nil { toolResult = err.Error() } else { toolResult = chatdb.FormatMessages(msgs) }
-									} else {
-										// Fallback to recent if search called with no parameters
-										msgs, err := dbStore.DB().LoadHistory(chatID, limit)
-										if err != nil { toolResult = err.Error() } else { toolResult = chatdb.FormatMessages(msgs) }
-									}
+									toolResult = chatdb.FormatMessages(msgs)
 								}
 							} else {
-								toolResult = "Error: chat_history tool is only available when historyMode is set to 'db'"
+								query, _ := rawArgs["query"].(string)
+								fromStr, _ := rawArgs["from"].(string)
+								toStr, _ := rawArgs["to"].(string)
+
+								if fromStr != "" && toStr != "" {
+									from, err1 := time.Parse("2006-01-02", fromStr)
+									to, err2 := time.Parse("2006-01-02", toStr)
+									if err1 == nil && err2 == nil {
+										// Make 'to' end of day
+										to = to.Add(24 * time.Hour).Add(-time.Nanosecond)
+										if query != "" {
+											msgs, err := a.Sessions.DB().SearchByDateAndQuery(chatID, query, from, to, limit)
+											if err == nil { toolResult = chatdb.FormatMessages(msgs) } else { toolResult = err.Error() }
+										} else {
+											msgs, err := a.Sessions.DB().SearchByDate(chatID, from, to, limit)
+											if err == nil { toolResult = chatdb.FormatMessages(msgs) } else { toolResult = err.Error() }
+										}
+									} else {
+										toolResult = "Error parsing dates. Please use YYYY-MM-DD format."
+									}
+								} else if query != "" {
+									msgs, err := a.Sessions.DB().Search(chatID, query, limit)
+									if err != nil { toolResult = err.Error() } else { toolResult = chatdb.FormatMessages(msgs) }
+								} else {
+									// Fallback to recent if search called with no parameters
+									msgs, err := a.Sessions.DB().LoadHistory(chatID, limit)
+									if err != nil { toolResult = err.Error() } else { toolResult = chatdb.FormatMessages(msgs) }
+								}
 							}
 						} else if tc.Function.Name == "yaocc_skills_run" {
 							name, _ := rawArgs["name"].(string)
@@ -1025,11 +1048,9 @@ func (a *Agent) GetTools() []llm.Tool {
 		})
 	}
 
-	// Internal Chat History Tool for DB mode
-	if a.Config.Session.HistoryMode == "db" {
-		if schemas := GetBuiltinToolSchemas("chat-history", "Interact with the current chat session history"); schemas != nil {
-			tools = append(tools, schemas...)
-		}
+	// Internal Chat History Tool
+	if schemas := GetBuiltinToolSchemas("chat-history", "Interact with the current chat session history"); schemas != nil {
+		tools = append(tools, schemas...)
 	}
 
 	// 3. Aggregate Tools from MCP Servers
@@ -1089,28 +1110,21 @@ func (a *Agent) UpdateSessionSummary(sessionID string) {
 		currentSummary, _ = a.Sessions.LoadSummary(sessionID)
 	}
 
-	if strategy == "rolling" && a.Config.Session.HistoryMode == "db" {
-		if dbStore, ok := a.Sessions.(*DBSessionStore); ok {
-			history, lastID, err = dbStore.GetUnsummarizedMessages(sessionID)
-			if err != nil {
-				log.Printf("Failed to load unsummarized history: %v", err)
-				return
-			}
-			if len(history) == 0 {
-				return // Nothing new to summarize
-			}
-		} else {
-			history, err = a.Sessions.LoadHistory(sessionID, -1)
-			if err != nil { return }
+	if strategy == "rolling" {
+		history, lastID, err = a.Sessions.GetUnsummarizedMessages(sessionID)
+		if err != nil {
+			log.Printf("Failed to load unsummarized history: %v", err)
+			return
+		}
+		if len(history) == 0 {
+			return // Nothing new to summarize
 		}
 	} else {
 		history, err = a.Sessions.LoadHistory(sessionID, -1)
-		if err != nil { return } // Should we still log? (Handled below)
-	}
-
-	if err != nil {
-		log.Printf("Failed to load history for summary: %v", err)
-		return
+		if err != nil {
+			log.Printf("Failed to load history for summary: %v", err)
+			return
+		}
 	}
 
 	if len(history) == 0 {
@@ -1139,13 +1153,11 @@ func (a *Agent) UpdateSessionSummary(sessionID string) {
 	}
 
 	// 7. Save Summary
-	if a.Config.Session.HistoryMode == "db" && strategy == "rolling" {
-		if dbStore, ok := a.Sessions.(*DBSessionStore); ok {
-			if err := dbStore.SaveSummaryCheckpoint(sessionID, lastID, newSummary); err != nil {
-				log.Printf("Failed to save summary checkpoint: %v", err)
-			}
-			return
+	if strategy == "rolling" {
+		if err := a.Sessions.SaveSummaryCheckpoint(sessionID, lastID, newSummary); err != nil {
+			log.Printf("Failed to save summary checkpoint: %v", err)
 		}
+		return
 	}
 	
 	if err := a.Sessions.SaveSummary(sessionID, newSummary); err != nil {

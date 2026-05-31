@@ -1,130 +1,149 @@
 package agent
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
+	"github.com/dev-dhg/yaocc/pkg/chatdb"
 	"github.com/dev-dhg/yaocc/pkg/llm"
 )
 
-// SessionStore is the interface for chat history backends
-type SessionStore interface {
-	LoadHistory(sessionID string, limit int) ([]llm.Message, error)
-	Append(sessionID, role, content string) error
-	LoadSummary(sessionID string) (string, error)
-	SaveSummary(sessionID, content string) error
-	AcquireLock(sessionID string) (func(), error)
-	WaitForLock(sessionID string, timeout time.Duration) error
-	Close() error
-}
-
-type SessionManager struct {
+// SessionStore implements SQLite-backed session storage and lock file handling.
+type SessionStore struct {
 	BaseDir string
+	db      *chatdb.ChatDB
 }
 
-func NewSessionManager(baseDir string) *SessionManager {
-	return &SessionManager{BaseDir: baseDir}
-}
-
-func (sm *SessionManager) GetSessionFile(sessionID string) string {
-	// Sanitize session ID to prevent path traversal
-	safeID := filepath.Base(filepath.Clean(sessionID))
-	if safeID == "." || safeID == "/" {
-		safeID = "general"
+// NewSessionStore creates a new SQLite-backed session store.
+func NewSessionStore(baseDir string) (*SessionStore, error) {
+	if err := os.MkdirAll(baseDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create session directory: %w", err)
 	}
-	return filepath.Join(sm.BaseDir, safeID+".md")
-}
 
-func (sm *SessionManager) GetSummaryFile(sessionID string) string {
-	safeID := filepath.Base(filepath.Clean(sessionID))
-	if safeID == "." || safeID == "/" {
-		safeID = "general"
-	}
-	return filepath.Join(sm.BaseDir, safeID+"-summary.md")
-}
-
-func (sm *SessionManager) GetLockFile(sessionID string) string {
-	safeID := filepath.Base(filepath.Clean(sessionID))
-	if safeID == "." || safeID == "/" {
-		safeID = "general"
-	}
-	return filepath.Join(sm.BaseDir, safeID+".lock")
-}
-
-func (sm *SessionManager) Close() error {
-	return nil // No-op for file-based manager
-}
-
-func (sm *SessionManager) LoadHistory(sessionID string, limit int) ([]llm.Message, error) {
-	path := sm.GetSessionFile(sessionID)
-	content, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return []llm.Message{}, nil
-	}
+	dbPath := filepath.Join(baseDir, "sessions.db")
+	db, err := chatdb.Open(dbPath)
 	if err != nil {
 		return nil, err
 	}
 
-	messages := parseMarkdownHistory(string(content))
-	
-	if limit > 0 && len(messages) > limit {
-		return messages[len(messages)-limit:], nil
-	}
-	
-	return messages, nil
+	return &SessionStore{
+		BaseDir: baseDir,
+		db:      db,
+	}, nil
 }
 
-func (sm *SessionManager) LoadSummary(sessionID string) (string, error) {
-	path := sm.GetSummaryFile(sessionID)
-	content, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return "", nil
-	}
-	if err != nil {
-		return "", err
-	}
-	return string(content), nil
-}
-
-func (sm *SessionManager) Append(sessionID string, role, content string) error {
-	path := sm.GetSessionFile(sessionID)
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	timestamp := time.Now().Format(time.RFC3339)
-	entry := fmt.Sprintf("\n### %s (%s)\n\n%s\n", strings.Title(role), timestamp, content)
-	if _, err := f.WriteString(entry); err != nil {
-		return err
+func (s *SessionStore) Close() error {
+	if s.db != nil {
+		return s.db.Close()
 	}
 	return nil
 }
 
-func (sm *SessionManager) SaveSummary(sessionID, content string) error {
-	path := sm.GetSummaryFile(sessionID)
-	return os.WriteFile(path, []byte(content), 0644)
+func (s *SessionStore) LoadHistory(sessionID string, limit int) ([]llm.Message, error) {
+	dbMsgs, err := s.db.LoadHistory(sessionID, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	var messages []llm.Message
+	for _, msg := range dbMsgs {
+		llmMsg := llm.Message{
+			Role:    msg.Role,
+			Content: msg.Content,
+		}
+
+		if msg.Metadata != "" && msg.Metadata != "{}" {
+			var meta map[string]interface{}
+			if err := json.Unmarshal([]byte(msg.Metadata), &meta); err == nil {
+				if id, ok := meta["tool_call_id"].(string); ok {
+					llmMsg.ToolCallID = id
+				}
+				if name, ok := meta["name"].(string); ok {
+					llmMsg.Name = name
+				}
+			}
+		}
+
+		messages = append(messages, llmMsg)
+	}
+
+	return messages, nil
 }
 
-// AcquireLock attempts to create a .lock file.
-// It returns a release function and an error if it failed.
-// It does NOT wait. The caller should implement waiting if needed.
-func (sm *SessionManager) AcquireLock(sessionID string) (func(), error) {
-	lockPath := sm.GetLockFile(sessionID)
-	// Check if exists
+func (s *SessionStore) Append(sessionID string, role, content string) error {
+	return s.db.Append(sessionID, role, content, "")
+}
+
+// AppendWithMetadata allows storing extra fields like tool_call_id.
+func (s *SessionStore) AppendWithMetadata(sessionID string, role, content string, metadata map[string]interface{}) error {
+	metaStr := "{}"
+	if metadata != nil {
+		b, err := json.Marshal(metadata)
+		if err == nil {
+			metaStr = string(b)
+		}
+	}
+	return s.db.Append(sessionID, role, content, metaStr)
+}
+
+func (s *SessionStore) LoadSummary(sessionID string) (string, error) {
+	return s.db.LoadSummary(sessionID)
+}
+
+func (s *SessionStore) SaveSummary(sessionID, content string) error {
+	msgs, err := s.db.LoadHistory(sessionID, 1)
+	var latestID int64
+	if err == nil && len(msgs) > 0 {
+		latestID = msgs[0].ID
+	}
+	return s.db.SaveSummaryCheckpoint(sessionID, latestID, content)
+}
+
+func (s *SessionStore) SaveSummaryCheckpoint(sessionID string, lastMessageID int64, content string) error {
+	return s.db.SaveSummaryCheckpoint(sessionID, lastMessageID, content)
+}
+
+func (s *SessionStore) GetUnsummarizedMessages(sessionID string) ([]llm.Message, int64, error) {
+	dbMsgs, lastID, err := s.db.GetUnsummarizedMessages(sessionID)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	var messages []llm.Message
+	for _, msg := range dbMsgs {
+		messages = append(messages, llm.Message{
+			Role:    msg.Role,
+			Content: msg.Content,
+		})
+	}
+
+	return messages, lastID, nil
+}
+
+// Clear removes all messages and summary checkpoints for a given session.
+func (s *SessionStore) Clear(sessionID string) error {
+	return s.db.ClearSession(sessionID)
+}
+
+// Locks
+
+func (s *SessionStore) GetLockFile(sessionID string) string {
+	safeID := filepath.Base(filepath.Clean(sessionID))
+	if safeID == "." || safeID == "/" {
+		safeID = "general"
+	}
+	return filepath.Join(s.BaseDir, safeID+".lock")
+}
+
+func (s *SessionStore) AcquireLock(sessionID string) (func(), error) {
+	lockPath := s.GetLockFile(sessionID)
 	if _, err := os.Stat(lockPath); err == nil {
 		return nil, fmt.Errorf("session locked")
 	}
 
-	// Create lock file
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
 	if err != nil {
 		return nil, err
@@ -136,9 +155,8 @@ func (sm *SessionManager) AcquireLock(sessionID string) (func(), error) {
 	}, nil
 }
 
-// WaitForLock waits for the lock to be released, with a timeout.
-func (sm *SessionManager) WaitForLock(sessionID string, timeout time.Duration) error {
-	lockPath := sm.GetLockFile(sessionID)
+func (s *SessionStore) WaitForLock(sessionID string, timeout time.Duration) error {
+	lockPath := s.GetLockFile(sessionID)
 	start := time.Now()
 	for {
 		if _, err := os.Stat(lockPath); os.IsNotExist(err) {
@@ -151,44 +169,7 @@ func (sm *SessionManager) WaitForLock(sessionID string, timeout time.Duration) e
 	}
 }
 
-func parseMarkdownHistory(content string) []llm.Message {
-	// simplistic parser: looks for ### Role headers
-	// This is a placeholder. Real implementation needs robust parsing.
-	// For now, we might just treat the whole file as previous context?
-	// Or just return empty if we rely on LLM to read the file context directly?
-	// Let's implement a simple line-based parser.
-
-	var messages []llm.Message
-	lines := strings.Split(content, "\n")
-	var currentRole string
-	var currentContent strings.Builder
-
-	for _, line := range lines {
-		if strings.HasPrefix(line, "### User") {
-			if currentRole != "" {
-				messages = append(messages, llm.Message{Role: strings.ToLower(currentRole), Content: strings.TrimSpace(currentContent.String())})
-				currentContent.Reset()
-			}
-			currentRole = "user"
-		} else if strings.HasPrefix(line, "### Assistant") || strings.HasPrefix(line, "### Model") {
-			if currentRole != "" {
-				messages = append(messages, llm.Message{Role: strings.ToLower(currentRole), Content: strings.TrimSpace(currentContent.String())})
-				currentContent.Reset()
-			}
-			currentRole = "assistant"
-		} else if strings.HasPrefix(line, "### System") {
-			if currentRole != "" {
-				messages = append(messages, llm.Message{Role: strings.ToLower(currentRole), Content: strings.TrimSpace(currentContent.String())})
-				currentContent.Reset()
-			}
-			currentRole = "system"
-		} else {
-			currentContent.WriteString(line + "\n")
-		}
-	}
-	if currentRole != "" {
-		messages = append(messages, llm.Message{Role: strings.ToLower(currentRole), Content: strings.TrimSpace(currentContent.String())})
-	}
-
-	return messages
+// Helper getter
+func (s *SessionStore) DB() *chatdb.ChatDB {
+	return s.db
 }

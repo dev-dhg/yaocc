@@ -45,7 +45,6 @@
     }
   },
 	"session": {
-		"historyMode": "db",
 		"historyLimit": 20,
 		"summarize": true,
 		"summaryModel": "ollama/gemma3:4b",
