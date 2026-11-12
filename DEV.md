@@ -146,6 +146,10 @@ Fallbacks can be configured globally under `models.fallbacks` or per model under
 
 When an HTTP 429 response is returned by the LLM provider, YAOCC logs a warning and tries the fallback models sequentially until one succeeds.
 
+### Google Gemini & Thought Signatures (Thinking Models)
+
+When using Google Gemini thinking models (such as `gemini-3.1-flash-lite`, `gemini-2.5-flash`, etc.) through Google's OpenAI-compatible endpoint, Gemini returns cryptographic tokens (`extra_content.google.thought_signature`) on function calls. YAOCC automatically retains and echoes these signatures on subsequent tool turns, preventing `400 INVALID_ARGUMENT: Function call is missing a thought_signature` errors while remaining 100% transparent and compatible with models that don't use thought signatures (OpenAI, Anthropic, Ollama, DeepSeek).
+
 ### Automatic Migration
 If you have an existing `config.json` with `cron` fields, YAOCC will automatically migrate them to `cron.json` on first startup and clean up the old fields from `config.json`.
 

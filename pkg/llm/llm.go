@@ -92,9 +92,10 @@ type ToolFunction struct {
 }
 
 type ToolCall struct {
-	ID       string       `json:"id"`
-	Type     string       `json:"type"` // "function"
-	Function FunctionCall `json:"function"`
+	ID           string       `json:"id"`
+	Type         string       `json:"type"` // "function"
+	Function     FunctionCall `json:"function"`
+	ExtraContent interface{}  `json:"extra_content,omitempty"` // Gemini/Google thought_signature and provider-specific metadata
 }
 
 type FunctionCall struct {
