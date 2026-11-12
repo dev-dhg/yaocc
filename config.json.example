@@ -12,6 +12,7 @@
   ],
   "models": {
     "model": "ollama/llama3.2",
+    "fallbacks": ["ollama/gemma3:4b"],
     "providers": {
       "ollama": {
         "baseUrl": "http://localhost:11434/v1",

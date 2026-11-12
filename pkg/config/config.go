@@ -70,7 +70,8 @@ type FreeTierConfig struct {
 
 type ModelsConfig struct {
 	Providers map[string]ProviderConfig `json:"providers"`
-	Selected  string                    `json:"model"` // e.g. "ollama/gemma3:4b"
+	Selected  string                    `json:"model"`              // e.g. "ollama/gemma3:4b"
+	Fallbacks []string                  `json:"fallbacks,omitempty"` // Fallback models if primary hits 429/errors (e.g. ["openrouter/gemini", "ollama/llama3"])
 }
 
 type ProviderConfig struct {
@@ -82,9 +83,9 @@ type ProviderConfig struct {
 }
 
 type ModelConfig struct {
-	ID            string      `json:"id"`    // Internal ID
-	Model         string      `json:"model"` // API Model Name
-	Name          string      `json:"name"`  // Display Name
+	ID            string          `json:"id"`    // Internal ID
+	Model         string          `json:"model"` // API Model Name
+	Name          string          `json:"name"`  // Display Name
 	Reasoning     interface{}     `json:"reasoning,omitempty"`
 	Input         []string        `json:"input,omitempty"`
 	Sampling      *SamplingConfig `json:"sampling,omitempty"`
@@ -93,6 +94,7 @@ type ModelConfig struct {
 	MaxTurns      int             `json:"maxTurns,omitempty"`  // Override global max turns
 	TimeoutMs     int             `json:"timeoutMs,omitempty"` // Model-specific timeout
 	Tool          *bool           `json:"tool,omitempty"`      // Set to false to disable native tools for this model
+	Fallbacks     []string        `json:"fallbacks,omitempty"` // Model-specific fallback targets e.g. ["groq/llama3"]
 }
 
 func (m ModelConfig) SupportsVision() bool {

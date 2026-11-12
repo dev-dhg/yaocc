@@ -3,6 +3,7 @@ package llm
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,31 @@ import (
 
 	"github.com/dev-dhg/yaocc/pkg/config"
 )
+
+// APIError represents an HTTP error response from an LLM provider.
+type APIError struct {
+	StatusCode int
+	Body       string
+	BaseURL    string
+	Model      string
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("API request to %s failed with status %d (Model: %s): %s", e.BaseURL, e.StatusCode, e.Model, e.Body)
+}
+
+// IsRateLimit returns true if the error indicates a 429 Too Many Requests or rate limiting.
+func IsRateLimit(err error) bool {
+	if err == nil {
+		return false
+	}
+	var apiErr *APIError
+	if errors.As(err, &apiErr) && apiErr != nil {
+		return apiErr.StatusCode == http.StatusTooManyRequests
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "429") || strings.Contains(msg, "rate limit") || strings.Contains(msg, "too many requests")
+}
 
 type Client struct {
 	BaseURL    string
@@ -216,7 +242,12 @@ func (c *Client) Chat(messages []Message, tools []Tool) (string, string, []ToolC
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return "", "", nil, fmt.Errorf("API request to %s failed with status %d (Model: %s): %s", c.BaseURL, resp.StatusCode, c.Model, string(body))
+		return "", "", nil, &APIError{
+			StatusCode: resp.StatusCode,
+			Body:       string(body),
+			BaseURL:    c.BaseURL,
+			Model:      c.Model,
+		}
 	}
 
 	type ErrorResponse struct {

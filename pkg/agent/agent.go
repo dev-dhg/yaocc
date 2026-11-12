@@ -21,20 +21,29 @@ import (
 )
 
 type Agent struct {
-	Config     *config.Config
-	LLM        *llm.Client
-	Skills     []skills.Skill
-	Soul       string
-	Identity   string
-	User       string
-	Rules      string
-	Memory     string
-	Sessions   *SessionStore
-	Verbose    bool
-	LogFile    string
-	configDir  string
-	SummaryLLM *llm.Client
-	MCPServers map[string]*mcp.Client
+	Config          *config.Config
+	LLM             *llm.Client
+	FallbackClients []*llm.Client
+	Skills          []skills.Skill
+	Soul            string
+	Identity        string
+	User            string
+	Rules           string
+	Memory          string
+	Sessions        *SessionStore
+	Verbose         bool
+	LogFile         string
+	configDir       string
+	SummaryLLM      *llm.Client
+	MCPServers      map[string]*mcp.Client
+}
+
+// Close cleans up agent resources such as session database connections.
+func (a *Agent) Close() error {
+	if a.Sessions != nil {
+		return a.Sessions.Close()
+	}
+	return nil
 }
 
 // GetCurrentModel returns the selected model configuration, or nil if not found.
@@ -221,101 +230,77 @@ func readFileOrDefault(path, defaultContent string) string {
 	return string(content)
 }
 
-func (a *Agent) initLLM() error {
-	// Initialize LLM based on selected model
-	selectedModel := a.Config.Models.Selected // e.g., "ollama/gemma3:4b"
+func (a *Agent) resolveModelClient(modelKey string) (*llm.Client, *config.ModelConfig, error) {
 	var providerKey, modelID string
-
-	if strings.Contains(selectedModel, "/") {
-		parts := strings.SplitN(selectedModel, "/", 2)
+	if strings.Contains(modelKey, "/") {
+		parts := strings.SplitN(modelKey, "/", 2)
 		providerKey = parts[0]
 		modelID = parts[1]
 	} else {
-		// Fallback or default
 		providerKey = "ollama"
-		modelID = "" // Use provider default
+		modelID = modelKey
 	}
 
 	provider, ok := a.Config.Models.Providers[providerKey]
 	if !ok {
-		return fmt.Errorf("provider '%s' not found config", providerKey)
+		return nil, nil, fmt.Errorf("provider '%s' not found in config", providerKey)
 	}
 
-	// Find specific model details
-	// We require the model to be defined in the provider's list to get the correct API model name (and max tokens, etc)
-	actualModelName := ""
-	found := false
-
 	if modelID == "" {
-		return fmt.Errorf("invalid model string '%s': missing model ID (format: provider/modelID)", selectedModel)
+		return nil, nil, fmt.Errorf("invalid model string '%s': missing model ID", modelKey)
 	}
 
 	for _, m := range provider.Models {
-		if m.ID == modelID {
-			actualModelName = m.Model // Use API model name
-			found = true
-			break
+		if m.ID == modelID || m.Model == modelID {
+			client := llm.NewClient(provider, m.Model)
+			return client, &m, nil
 		}
 	}
 
-	if !found {
-		return fmt.Errorf("model ID '%s' not found in provider '%s' configuration", modelID, providerKey)
+	return nil, nil, fmt.Errorf("model ID '%s' not found in provider '%s' configuration", modelID, providerKey)
+}
+
+func (a *Agent) initLLM() error {
+	// Initialize LLM based on selected model
+	selectedModel := a.Config.Models.Selected // e.g., "ollama/gemma3:4b"
+	client, currentModel, err := a.resolveModelClient(selectedModel)
+	if err != nil {
+		return err
 	}
 
-	log.Printf("Selected Model: %s (API Name: %s)", selectedModel, actualModelName)
+	log.Printf("Selected Model: %s (API Name: %s)", selectedModel, client.Model)
+	a.LLM = client
 
-	a.LLM = llm.NewClient(provider, actualModelName)
+	// Initialize fallback clients
+	a.FallbackClients = nil
+	var fallbackNames []string
+	if currentModel != nil && len(currentModel.Fallbacks) > 0 {
+		fallbackNames = currentModel.Fallbacks
+	} else if len(a.Config.Models.Fallbacks) > 0 {
+		fallbackNames = a.Config.Models.Fallbacks
+	}
+
+	for _, fb := range fallbackNames {
+		fbClient, _, fbErr := a.resolveModelClient(fb)
+		if fbErr != nil {
+			log.Printf("Warning: Failed to initialize fallback model '%s': %v", fb, fbErr)
+			continue
+		}
+		a.FallbackClients = append(a.FallbackClients, fbClient)
+		log.Printf("Configured fallback model: %s (API Name: %s)", fb, fbClient.Model)
+	}
 
 	// Initialize Summary LLM if configured
 	if a.Config.Session.Summarize {
 		summaryModelID := a.Config.Session.SummaryModel
 		if summaryModelID == "" {
-			// specific summary model not set, use the main model?
-			// or maybe we should default to the main model BUT we need to check if it supports it?
-			// For simplicity, if not set, we use the main LLM client (no need to create new one if same config).
-			// But wait, the main LLM client is bound to specific params (like max tokens).
-			// Summarization might need different params.
-			// Let's assume if not set, we use the same LLM client pointer.
 			a.SummaryLLM = a.LLM
 		} else {
-			// Initialize separate client for summary
-			// Logic similar to above...
-			// This duplication suggests extracting init logic.
-			// For now, let's copy-paste & adapt or refactor.
-			// Let's refactor initLLM to helper?
-			// Or just inline for now to save time/complexity.
-
-			sProviderKey := "ollama"
-			sModelID := ""
-
-			if strings.Contains(summaryModelID, "/") {
-				parts := strings.SplitN(summaryModelID, "/", 2)
-				sProviderKey = parts[0]
-				sModelID = parts[1]
+			sClient, _, sErr := a.resolveModelClient(summaryModelID)
+			if sErr == nil {
+				a.SummaryLLM = sClient
 			} else {
-				sModelID = summaryModelID // assumes default provider? or error? config says ID.
-				// Let's assume user provides "provider/model"
-			}
-
-			sProvider, ok := a.Config.Models.Providers[sProviderKey]
-			if ok {
-				sActualModelName := ""
-				sFound := false
-				for _, m := range sProvider.Models {
-					if m.ID == sModelID {
-						sActualModelName = m.Model
-						sFound = true
-						break
-					}
-				}
-				if sFound {
-					a.SummaryLLM = llm.NewClient(sProvider, sActualModelName)
-				} else {
-					log.Printf("Warning: Summary model ID '%s' not found. Fallback to main LLM.", summaryModelID)
-					a.SummaryLLM = a.LLM
-				}
-			} else {
-				log.Printf("Warning: Summary provider '%s' not found. Fallback to main LLM.", sProviderKey)
+				log.Printf("Warning: Summary model '%s' failed to initialize (%v). Fallback to main LLM.", summaryModelID, sErr)
 				a.SummaryLLM = a.LLM
 			}
 		}
@@ -441,9 +426,9 @@ func (a *Agent) Run(sessionID string, provider messaging.Provider, chatID, input
 
 		if a.IsNativeToolCallingEnabled() {
 			tools := a.GetTools()
-			response, reasoningContent, toolCalls, err = a.LLM.Chat(messages, tools)
+			response, reasoningContent, toolCalls, err = a.chatWithFallback(messages, tools)
 		} else {
-			response, reasoningContent, toolCalls, err = a.LLM.Chat(messages, nil)
+			response, reasoningContent, toolCalls, err = a.chatWithFallback(messages, nil)
 		}
 
 		if err != nil {
@@ -750,7 +735,7 @@ func (a *Agent) RunTask(sessionID, prompt, contextMsg string) (string, error) {
 	}
 
 	// Call LLM
-	response, _, _, err := a.LLM.Chat(messages, nil)
+	response, _, _, err := a.chatWithFallback(messages, nil)
 	if err != nil {
 		log.Printf("RunTask: LLM error: %v", err)
 		return "", err
@@ -770,7 +755,64 @@ func (a *Agent) RunTask(sessionID, prompt, contextMsg string) (string, error) {
 	return response, nil
 }
 
-// GetBaseSystemPrompt returns a minimal system prompt with identity, soul, user,
+// chatWithFallback attempts a chat call with a.LLM. If a 429 rate limit error occurs,
+// it falls back through a.FallbackClients sequentially.
+func (a *Agent) chatWithFallback(messages []llm.Message, tools []llm.Tool) (string, string, []llm.ToolCall, error) {
+	clients := []*llm.Client{a.LLM}
+	clients = append(clients, a.FallbackClients...)
+
+	var lastErr error
+	for idx, client := range clients {
+		if client == nil {
+			continue
+		}
+		resp, reasoning, toolCalls, err := client.Chat(messages, tools)
+		if err == nil {
+			if idx > 0 {
+				log.Printf("Fallback to model '%s' succeeded.", client.Model)
+			}
+			return resp, reasoning, toolCalls, nil
+		}
+
+		lastErr = err
+		if llm.IsRateLimit(err) && idx < len(clients)-1 {
+			log.Printf("Warning: Model '%s' hit rate limit (429): %v. Trying next fallback model...", client.Model, err)
+			continue
+		}
+
+		// If not a rate limit error or no more fallbacks, break
+		break
+	}
+
+	return "", "", nil, lastErr
+}
+
+// chatSummaryWithFallback attempts to call SummaryLLM with fallback to main LLM / fallbacks if 429 occurs.
+func (a *Agent) chatSummaryWithFallback(messages []llm.Message) (string, error) {
+	clients := []*llm.Client{a.SummaryLLM}
+	if a.SummaryLLM != a.LLM {
+		clients = append(clients, a.LLM)
+	}
+	clients = append(clients, a.FallbackClients...)
+
+	var lastErr error
+	for idx, client := range clients {
+		if client == nil {
+			continue
+		}
+		resp, _, _, err := client.Chat(messages, nil)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+		if llm.IsRateLimit(err) && idx < len(clients)-1 {
+			log.Printf("Warning: Summary model '%s' hit rate limit (429): %v. Trying fallback...", client.Model, err)
+			continue
+		}
+		break
+	}
+	return "", lastErr
+}
 // and memory context only. No tools, skills, or media instructions are included.
 // Use this for stateless contexts (e.g., cron jobs) where tool execution is not possible.
 func (a *Agent) GetBaseSystemPrompt() string {
@@ -1146,7 +1188,7 @@ func (a *Agent) UpdateSessionSummary(sessionID string) {
 		{Role: "user", Content: prompt},
 	}
 
-	newSummary, _, _, err := a.SummaryLLM.Chat(summaryMsg, nil)
+	newSummary, err := a.chatSummaryWithFallback(summaryMsg)
 	if err != nil {
 		log.Printf("Failed to generate summary: %v", err)
 		return

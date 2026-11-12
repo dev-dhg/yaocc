@@ -6,7 +6,7 @@ It is designed to be sandboxed, Docker-friendly, and has a tiny footprint (4-5mb
 
 ## Features
 
--   **LLM Integration**: Connects to Ollama, OpenRouter, or any OpenAI-compatible provider. Supports multimodal vision and audio inputs depending on configured model capabilities.
+-   **LLM Integration & Model Fallback**: Connects to Ollama, OpenRouter, or any OpenAI-compatible provider. Supports automatic model fallback if a model encounters HTTP 429 (rate limits). Supports multimodal vision and audio inputs depending on configured model capabilities.
 -   **Web Search**: Support for SearxNG, Brave, and Perplexity with fallback mechanisms.
 -   **Skill System**: Dynamic CLI command execution based on user requests. It can even create its own skills!
 -   **Local Chat History (SQLite & FTS5)**: Agents remember your conversations intelligently. Using a self-contained SQLite database with Full-Text Search enabled, YAOCC automatically slices conversation history and gives the LLM built-in abilities to securely query its own past messages without ballooning token contexts. Basic markdown history generation is also supported for highly constrained setups.

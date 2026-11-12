@@ -126,6 +126,26 @@ Copy the example files to get started:
 
 Environment variables can be used in config files using `${VAR_NAME}` syntax.
 
+### Model Fallbacks (HTTP 429 Rate Limits)
+
+YAOCC supports automatic fallback to secondary models if the primary model hits HTTP 429 (rate limit).
+Fallbacks can be configured globally under `models.fallbacks` or per model under `models.providers.<provider>.models[].fallbacks`:
+
+```json
+{
+  "models": {
+    "model": "openrouter/anthropic/claude-3.5-sonnet",
+    "fallbacks": [
+      "groq/llama-3.3-70b-versatile",
+      "ollama/llama3.2"
+    ],
+    "providers": { ... }
+  }
+}
+```
+
+When an HTTP 429 response is returned by the LLM provider, YAOCC logs a warning and tries the fallback models sequentially until one succeeds.
+
 ### Automatic Migration
 If you have an existing `config.json` with `cron` fields, YAOCC will automatically migrate them to `cron.json` on first startup and clean up the old fields from `config.json`.
 
